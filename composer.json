@@ -1,0 +1,19 @@
+{
+  "name": "sicuani/mini-uber",
+  "description": "Demo académica PHP y Redis para viajes simulados",
+  "type": "project",
+  "require": {
+    "php": "^8.3",
+    "predis/predis": "^3.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Uber\\": "src/"
+    }
+  },
+  "scripts": {
+    "conductor": "Uber\\Console\\CreateDriver::run",
+    "test": "php tests/run.php",
+    "serve": "php -S 127.0.0.1:8081 -t public public/router.php"
+  }
+}
