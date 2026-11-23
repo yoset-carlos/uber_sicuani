@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#00536B">
+  <meta name="theme-color" content="#5F66F5">
   <meta name="description" content="Uber Sicuani: práctica académica de viajes simulados con pasajeros y conductores.">
   <title>Uber Sicuani — Tu próximo viaje</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/logo-icon.png">
   <link rel="preload" href="/assets/vendor/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/assets/vendor/leaflet.css">
   <link rel="stylesheet" href="/assets/app.css?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/app.css'),0,12) ?>">
@@ -18,7 +19,7 @@
   <a class="skip" href="#panel">Ir a los controles del viaje</a>
   <div id="app">
     <header class="header">
-      <a class="brand" href="/" aria-label="Uber Sicuani, inicio">Uber<span>Sicuani</span></a>
+      <a class="brand" href="/" aria-label="Uber Sicuani, inicio"><img class="brand-logo" src="/assets/logo.png" alt="Uber Sicuani" width="120" height="45"></a>
       <nav aria-label="Navegación principal" id="navigation" hidden>
         <button type="button" data-view="home" aria-current="page">Viajar</button>
         <button type="button" data-view="history">Actividad</button>

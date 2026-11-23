@@ -26,6 +26,8 @@ const names = [
   "CheckCircleIcon",
   "TruckIcon",
   "BanknotesIcon",
+  "EyeIcon",
+  "EyeSlashIcon",
 ];
 const icons = {};
 for (const name of names) {

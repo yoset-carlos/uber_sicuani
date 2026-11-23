@@ -482,7 +482,7 @@ function updateMap({ fit = true } = {}) {
         [points.origen.lat, points.origen.lng],
         [points.destino.lat, points.destino.lng],
       ],
-      { color: "#00536b", weight: 4, dashArray: "7 7" },
+      { color: "#5F66F5", weight: 4, dashArray: "7 7" },
     ).addTo(map);
   }
   if (fit) fitVisibleRoute();
@@ -514,6 +514,9 @@ function heading(eyebrow, title, subtitle = "") {
   return `<div class="panel-heading"><p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}</div>`;
 }
 function field(name, label, type = "text", attrs = "") {
+  if (type === "password") {
+    return `<div class="field"><label for="${name}">${label}</label><div class="password-wrap"><input id="${name}" name="${name}" type="password" ${attrs}><button type="button" class="password-toggle" data-toggle-password="${name}" aria-label="Mostrar contraseña" aria-pressed="false">${icon("EyeIcon")}</button></div></div>`;
+  }
   return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" ${attrs}></div>`;
 }
 function route(j) {
@@ -590,7 +593,7 @@ function passengerOffers(j) {
         <details class="offer-negotiate"><summary>Proponer otro precio</summary><form class="form-grid offer-counteroffer" data-offer-id="${offerId}"><div class="field"><label for="offer-${offerId}-amount">Tu precio en soles</label><input id="offer-${offerId}-amount" name="importe" type="number" required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"></div><p class="error-text" role="alert" hidden></p><button type="submit" class="secondary" data-change>Enviar contraoferta</button></form></details>
         <button type="button" class="text-button" data-action="rechazar-oferta" data-id="${j.id}" data-offer-id="${offerId}" data-change>Rechazar esta propuesta</button></div>`}
       </article>`;
-    }).join("")}</div>` : '<div class="info-well"><h3>Esperando propuestas</h3><p>Varios choferes pueden enviar su precio. Las propuestas aparecerán aquí automáticamente.</p></div>'}
+    }).join("")}</div>` : `<div class="info-well"><div class="radar-wrap" aria-hidden="true"><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-center-dot">${icon("TruckIcon")}</div></div><h3>Buscando conductores</h3><p>Varios choferes pueden enviar su precio. Las propuestas aparecerán aquí automáticamente.</p></div>`}
   </section>`;
 }
 function tripView(j) {
@@ -633,7 +636,7 @@ function tripView(j) {
     ? `<details class="route-details"><summary>Ver recorrido</summary>${route(j)}</details>`
     : route(j);
   if (j.estado === "pendiente")
-    html += j.version === 2 ? passengerOffers(j) : `<div class="info-well"><h3>Estamos buscando un conductor</h3><p>Recibirás su propuesta de precio aquí. Puedes esperar hasta 10 minutos.</p></div>`;
+    html += j.version === 2 ? passengerOffers(j) : `<div class="info-well"><div class="radar-wrap" aria-hidden="true"><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-center-dot">${icon("TruckIcon")}</div></div><h3>Estamos buscando un conductor</h3><p>Recibirás su propuesta de precio aquí. Puedes esperar hasta 10 minutos.</p></div>`;
   if (j.estado === "reservado")
     html += driver
       ? `<p class="hint">${j.version === 2 ? "Otros choferes también pueden proponer su precio. El pasajero elige con quién viajar." : "Prepara tu precio antes de que termine el plazo."}</p><form id="price-form" class="form-grid">${field("importe", "Tu precio en soles", "number", 'required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"')}<button type="submit" class="primary" data-change>Enviar propuesta</button></form>`
@@ -950,6 +953,19 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b || b.disabled) return;
   try {
+    if (b.dataset.togglePassword || b.classList.contains("password-toggle")) {
+      const targetId = b.dataset.togglePassword;
+      const input = targetId ? document.getElementById(targetId) : b.closest(".password-wrap")?.querySelector("input");
+      if (input) {
+        const isPass = input.type === "password";
+        input.type = isPass ? "text" : "password";
+        b.setAttribute("aria-label", isPass ? "Ocultar contraseña" : "Mostrar contraseña");
+        b.setAttribute("aria-pressed", String(isPass));
+        b.innerHTML = icon(isPass ? "EyeSlashIcon" : "EyeIcon");
+        hydrateIcons();
+      }
+      return;
+    }
     if (b.id === "switch-auth") {
       state.auth = state.auth === "login" ? "register" : "login";
       state.registrationMessage = "";

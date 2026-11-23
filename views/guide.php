@@ -3,16 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#00536b">
+  <meta name="theme-color" content="#5F66F5">
   <meta name="description" content="Conoce cómo registrarte, solicitar un viaje, enviar propuestas y aprobar choferes en Uber Sicuani.">
   <title>Cómo funciona — Uber Sicuani</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/logo-icon.png">
   <link rel="preload" href="/assets/vendor/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/assets/guide.css?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/guide.css'),0,12) ?>">
 </head>
 <body>
   <a class="skip" href="#contenido">Ir al contenido</a>
-  <header class="site-header"><a class="brand" href="/">Uber <span>Sicuani</span></a><a class="button small" href="/">Ir al sistema <span aria-hidden="true">↗</span></a></header>
+  <header class="site-header"><a class="brand" href="/" aria-label="Uber Sicuani, inicio"><img class="brand-logo" src="/assets/logo.png" alt="Uber Sicuani" width="120" height="45"></a><a class="button small" href="/">Ir al sistema <span aria-hidden="true">↗</span></a></header>
   <main id="contenido">
     <section class="hero" aria-labelledby="titulo">
       <div><p class="eyebrow">GUÍA DEL SISTEMA</p><h1 id="titulo">De la solicitud<br>al destino.</h1><p class="intro">Conoce cada paso del viaje y lo que hace cada persona: pasajero, chofer y administrador.</p><div class="hero-actions"><a class="button" href="#pasajero">Quiero viajar <span aria-hidden="true">↓</span></a><a class="text-link" href="#conductor">Soy chofer <span aria-hidden="true">↗</span></a></div><p class="demo">Proyecto académico en Sicuani, Cusco. Los viajes y pagos son simulados.</p></div>
@@ -38,6 +39,6 @@
     </div></section>
     <section class="closing"><div><p class="eyebrow">YA CONOCES EL RECORRIDO</p><h2>Tu próximo paso empieza aquí.</h2></div><a class="button" href="/">Abrir el sistema <span aria-hidden="true">↗</span></a></section>
   </main>
-  <footer><a class="brand" href="/">Uber <span>Sicuani</span></a><p>Proyecto académico · Viajes y pagos simulados</p><a href="#titulo">Volver arriba ↑</a></footer>
+  <footer><a class="brand" href="/" aria-label="Uber Sicuani, inicio"><img class="brand-logo" src="/assets/logo.png" alt="Uber Sicuani" width="100" height="38"></a><p>Proyecto académico · Viajes y pagos simulados</p><a href="#titulo">Volver arriba ↑</a></footer>
 </body>
 </html>
