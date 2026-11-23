@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#141414">
+  <meta name="theme-color" content="#00536B">
   <meta name="description" content="Uber Sicuani: práctica académica de viajes simulados con pasajeros y conductores.">
   <title>Uber Sicuani — Tu próximo viaje</title>
   <link rel="icon" href="data:,">
   <link rel="preload" href="/assets/vendor/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/assets/vendor/leaflet.css">
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/app.css?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/app.css'),0,12) ?>">
   <script src="/assets/vendor/leaflet.js" defer></script>
-  <script src="/assets/app.js" defer></script>
+  <script src="/assets/sheet.js?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/sheet.js'),0,12) ?>" defer></script>
+  <script src="/assets/app.js?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/app.js'),0,12) ?>" defer></script>
 </head>
 <body>
   <a class="skip" href="#panel">Ir a los controles del viaje</a>
@@ -33,8 +34,13 @@
         <div id="tile-warning" class="map-warning" role="status" hidden>No se pudo cargar parte del mapa. Tus puntos se conservan. Revisa la conexión.</div>
       </section>
       <section id="panel" class="panel" aria-label="Controles del viaje" tabindex="-1">
-        <div class="sheet-handle" aria-hidden="true"></div>
-        <div id="panel-content"><p class="muted loading">Preparando tu próximo viaje…</p></div>
+        <div class="sheet-toolbar" aria-label="Altura del panel">
+          <button type="button" id="sheet-lower" class="sheet-step" aria-label="Bajar panel" aria-controls="panel-scroll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+          <button type="button" id="sheet-handle" class="sheet-handle" aria-label="Cambiar altura del panel" aria-controls="panel-scroll" aria-expanded="true"><span aria-hidden="true"></span></button>
+          <button type="button" id="sheet-raise" class="sheet-step" aria-label="Subir panel" aria-controls="panel-scroll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+          <span id="sheet-status" class="sr-only" role="status" aria-live="polite"></span>
+        </div>
+        <div id="panel-scroll" class="panel-scroll"><div id="panel-content"><p class="muted loading">Preparando tu próximo viaje…</p></div></div>
       </section>
     </main>
     <footer class="footer"><span>Hecho para moverse por Sicuani.</span><span>Proyecto académico · Sin cobros reales</span></footer>

@@ -26,6 +26,7 @@ const labels = {
   finalizado: "Viaje finalizado",
   cancelado: "Viaje cancelado",
   sin_conductor: "No encontramos conductores",
+  no_elegido: "Solicitud cerrada",
 };
 const reasons = {
   cambio_de_planes: "Cambio de planes",
@@ -38,7 +39,7 @@ const reasons = {
   viaje_finalizado: "Viaje finalizado",
 };
 const terminal = (j) =>
-  j && ["finalizado", "cancelado", "sin_conductor"].includes(j.estado);
+  j && ["finalizado", "cancelado", "sin_conductor", "no_elegido"].includes(j.estado);
 const state = {
   user: null,
   csrf: "",
@@ -71,6 +72,8 @@ let map,
   lastPoll;
 let renderedMode = "";
 let addressQueue = Promise.resolve();
+let placeSearch = null;
+let placeSearchTimer;
 const panel = $("#panel-content");
 const icon = (name) => `<span data-icon="${name}" aria-hidden="true"></span>`;
 function hydrateIcons() {
@@ -206,6 +209,7 @@ function setTiles() {
   tiles.on("tileload", () => ($("#tile-warning").hidden = true));
 }
 function setPoint(key, lat, lng) {
+  closePlaceSearch();
   const input = $(`#${key}`);
   const point = { lat, lng, nombre: "", resolviendo: true };
   state.points[key] = point;
@@ -217,6 +221,77 @@ function setPoint(key, lat, lng) {
   updateMap({ fit: false });
   updateSelection();
   resolvePointAddress(key, point);
+}
+function closePlaceSearch() {
+  clearTimeout(placeSearchTimer);
+  placeSearch = null;
+  for (const key of ["origen", "destino"]) {
+    const input = $(`#${key}`);
+    input?.setAttribute("aria-expanded", "false");
+    input?.removeAttribute("aria-activedescendant");
+    const list = $(`#${key}-suggestions`);
+    if (list) { list.hidden = true; list.replaceChildren(); }
+    const status = $(`#${key}-search-status`);
+    if (status) status.textContent = "";
+  }
+}
+function paintPlaceSearch(search, message) {
+  if (placeSearch !== search) return;
+  const input = $(`#${search.key}`);
+  const list = $(`#${search.key}-suggestions`);
+  if (!input || !list) return;
+  list.innerHTML = search.items.map((item, index) =>
+    `<li id="${search.key}-suggestion-${index}" role="option" aria-selected="${index === search.active}" data-place-index="${index}"><strong>${esc(item.nombre)}</strong>${item.direccion ? `<span>${esc(item.direccion)}</span>` : ""}</li>`
+  ).join("");
+  list.hidden = !search.items.length;
+  input.setAttribute("aria-expanded", String(!list.hidden));
+  if (search.active >= 0) input.setAttribute("aria-activedescendant", `${search.key}-suggestion-${search.active}`);
+  else input.removeAttribute("aria-activedescendant");
+  $(`#${search.key}-search-status`).textContent = message;
+}
+function schedulePlaceSearch(input) {
+  closePlaceSearch();
+  const text = input.value.trim();
+  if (text.length < 3 || state.user?.rol !== "pasajero" || state.trip) return;
+  const search = { key: input.id, text, uid: state.user.id, items: [], active: -1 };
+  placeSearch = search;
+  const current = () => placeSearch === search && input.isConnected && document.activeElement === input && input.value.trim() === text && state.user?.id === search.uid && !state.trip;
+  paintPlaceSearch(search, "Buscando…");
+  const run = async () => {
+    if (!current()) return;
+    try {
+      const result = await api("/mapa/buscar", { method: "POST", body: { texto: text } });
+      if (!current()) return;
+      if (result.estado === "ocupado") {
+        placeSearchTimer = setTimeout(run, Math.max(1200, result.reintentar_ms || 1250));
+        return;
+      }
+      search.items = result.resultados || [];
+      paintPlaceSearch(search, result.estado === "no_disponible"
+        ? "No pudimos buscar. Puedes marcar el punto en el mapa"
+        : search.items.length ? `${search.items.length} ${search.items.length === 1 ? "sugerencia disponible" : "sugerencias disponibles"}` : "No encontramos lugares");
+    } catch {
+      if (current()) paintPlaceSearch(search, "No pudimos buscar. Puedes marcar el punto en el mapa");
+    }
+  };
+  placeSearchTimer = setTimeout(run, 400);
+}
+function choosePlace(index) {
+  const search = placeSearch;
+  const item = search?.items[index];
+  if (!item) return;
+  const input = $(`#${search.key}`);
+  state.points[search.key] = { nombre: item.etiqueta, lat: item.lat, lng: item.lng, resolviendo: false };
+  input.value = item.etiqueta;
+  state.selecting = search.key;
+  closePlaceSearch();
+  input.blur();
+  window.rideSheet?.set("medium");
+  saveDraft();
+  updateMap({ fit: false });
+  updatePointTooltip(search.key);
+  updateSelection();
+  map?.setView([item.lat, item.lng], 16, { animate: false });
 }
 function resolvePointAddress(key, point) {
   addressQueue = addressQueue
@@ -338,8 +413,22 @@ function restoreDraft() {
     }
   } catch {}
 }
+function fitVisibleRoute() {
+  if (!map || map.getSize().y <= 180) return;
+  if (line) map.fitBounds(line.getBounds(), {
+    paddingTopLeft: innerWidth <= 800 ? [48, 100] : [65, 65],
+    paddingBottomRight: innerWidth <= 800 ? [48, 48] : [65, 65],
+    maxZoom: 16,
+    animate: false,
+  });
+  else {
+    const origin = (state.trip || state.points).origen;
+    if (origin) map.setView([origin.lat, origin.lng], 16, { animate: false });
+  }
+}
 function updateMap({ fit = true } = {}) {
   if (!map) return;
+  map.invalidateSize({ pan: false });
   const points = state.trip || state.points;
   for (const key of ["origen", "destino"]) {
     if (markers[key]) map.removeLayer(markers[key]);
@@ -393,16 +482,10 @@ function updateMap({ fit = true } = {}) {
         [points.origen.lat, points.origen.lng],
         [points.destino.lat, points.destino.lng],
       ],
-      { color: "#181c19", weight: 4, dashArray: "7 7" },
+      { color: "#00536b", weight: 4, dashArray: "7 7" },
     ).addTo(map);
-    if (fit)
-      map.fitBounds(line.getBounds(), {
-        padding: [65, 65],
-        maxZoom: 16,
-        animate: false,
-      });
-  } else if (fit && points.origen)
-    map.setView([points.origen.lat, points.origen.lng], 16, { animate: false });
+  }
+  if (fit) fitVisibleRoute();
   setTimeout(() => map.invalidateSize(), 0);
 }
 function updateSelection() {
@@ -456,23 +539,76 @@ function newTripView() {
       "¿A dónde vamos?",
       "Elige tus puntos y encuentra un conductor.",
     ) +
-    `<form id="trip-form" class="form-grid"><div class="route-fields">${["origen", "destino"].map((k) => `<div class="route-field"><span class="route-symbol ${k === "destino" ? "destination" : ""}" aria-hidden="true"></span><div class="grow"><label for="${k}">${k === "origen" ? "Punto de recogida" : "Tu destino"}</label><input id="${k}" name="${k}" required minlength="2" maxlength="120" placeholder="${k === "origen" ? "¿Dónde te recogemos?" : "¿A dónde quieres ir?"}" value="${esc(state.points[k]?.nombre)}" autocomplete="off"><p class="point-status" id="${k}-status"></p></div><button class="point-button" type="button" data-point="${k}" aria-label="Marcar ${k} en el mapa" aria-pressed="false">${icon("MapPinIcon")}</button></div>`).join("")}</div><div class="selection-help"><button type="button" class="secondary compact" id="gps">${icon("MapPinIcon")} Usar mi ubicación</button><p class="hint">Selecciona Recogida o Destino y toca el mapa. Puedes volver a tocar para cambiar el punto o arrastrar su marcador. La dirección se completa automáticamente y puedes editarla.</p></div><div class="payment-row">${icon("BanknotesIcon")}<div class="grow"><strong>Efectivo o Yape</strong><p class="muted small">Pago simulado al finalizar</p></div></div><p id="form-error" class="error-text" role="alert" hidden></p><button class="primary" type="submit" data-change>Solicitar viaje</button></form><p class="auth-note">El conductor propone el precio. Tú decides si lo aceptas.</p>`
+    `<form id="trip-form" class="form-grid"><div class="route-fields">${["origen", "destino"].map((k) => `<div class="route-field"><span class="route-symbol ${k === "destino" ? "destination" : ""}" aria-hidden="true"></span><div class="grow"><label for="${k}">${k === "origen" ? "Punto de recogida" : "Tu destino"}</label><input id="${k}" name="${k}" required minlength="2" maxlength="120" placeholder="${k === "origen" ? "¿Dónde te recogemos?" : "¿A dónde quieres ir?"}" value="${esc(state.points[k]?.nombre)}" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${k}-suggestions" aria-describedby="${k}-status ${k}-search-status"><ul id="${k}-suggestions" class="place-suggestions" role="listbox" aria-label="Sugerencias de ${k === "origen" ? "recogida" : "destino"}" hidden></ul><p id="${k}-search-status" class="place-search-status" role="status" aria-live="polite"></p><p class="point-status" id="${k}-status"></p></div><button class="point-button" type="button" data-point="${k}" aria-label="Marcar ${k} en el mapa" aria-pressed="false">${icon("MapPinIcon")}</button></div>`).join("")}</div><div class="selection-help"><button type="button" class="secondary compact" id="gps">${icon("MapPinIcon")} Usar mi ubicación</button><p class="hint">Escribe una dirección y elige una sugerencia, o selecciona Recogida o Destino y toca el mapa. Puedes mover el marcador y editar la referencia.</p></div><div class="payment-row">${icon("BanknotesIcon")}<div class="grow"><strong>Efectivo o Yape</strong><p class="muted small">Pago simulado al finalizar</p></div></div><p id="form-error" class="error-text" role="alert" hidden></p><button class="primary" type="submit" data-change>Solicitar viaje</button></form><p class="auth-note">El conductor propone el precio. Tú decides si lo aceptas.</p>`
   );
 }
+function requestCard(j) {
+  const id = esc(j.id);
+  return `<article class="request-card" aria-labelledby="request-${id}-destination">
+    <div class="request-destination">
+      <span class="request-stop-icon" aria-hidden="true">${icon("MapPinIcon")}</span>
+      <div><p class="request-label">Destino</p><h3 id="request-${id}-destination">${esc(j.destino.nombre)}</h3></div>
+    </div>
+    <div class="request-pickup">
+      <span class="route-symbol" aria-hidden="true"></span>
+      <div><p class="request-label">Recogida</p><p class="request-address">${esc(j.origen.nombre)}</p></div>
+    </div>
+    <p class="request-expiry">${icon("ClockIcon")}<span>Vence en <span class="countdown" data-deadline="${esc(j.busqueda_hasta)}"></span></span></p>
+    <div class="request-action">
+      <button type="button" class="primary" data-action="reservar" data-id="${id}" data-change aria-describedby="request-${id}-help">${j.version === 2 ? "Proponer mi precio" : "Reservar y proponer precio"}</button>
+      <p class="request-help" id="request-${id}-help">${j.version === 2 ? "Tienes 1 minuto para preparar tu precio. El pasajero elige entre las propuestas." : "Al reservar, tienes 1 minuto para proponer tu precio."}</p>
+    </div>
+  </article>`;
+}
 function driverHome() {
+  const count = state.pending.length;
   return (
     heading(
       "Conduce por Sicuani",
       "Tu próxima oportunidad",
       "Activa tu disponibilidad para ver las solicitudes.",
     ) +
-    `<div class="availability"><label for="available"><input id="available" name="disponible" type="checkbox" ${state.user.disponible === "1" ? "checked" : ""}><span>${state.user.disponible === "1" ? "Disponible" : "No disponible"}</span></label>${icon("TruckIcon")}</div><div class="row between small"><h2>Solicitudes</h2><p class="muted number">${state.pending.length} disponibles</p></div><div>${state.pending.length ? state.pending.map((j) => `<article class="request-card">${route(j)}<div class="row between"><p class="small muted">Búsqueda <span class="countdown" data-deadline="${j.busqueda_hasta}"></span></p></div><button type="button" class="secondary" data-action="reservar" data-id="${j.id}" data-change>Reservar solicitud</button></article>`).join("") : `<div class="empty-state"><h3>${state.user.disponible === "1" ? "Por ahora no hay solicitudes" : "Estás fuera de servicio"}</h3><p class="muted">${state.user.disponible === "1" ? "Las nuevas solicitudes aparecerán aquí automáticamente." : "Activa Disponible cuando quieras recibir viajes."}</p></div>`}</div><div class="info-well"><h3>Un viaje a la vez</h3><p>Al reservar tendrás un minuto para proponer tu precio.</p></div>`
+    `<div class="availability"><label for="available"><input id="available" name="disponible" type="checkbox" ${state.user.disponible === "1" ? "checked" : ""}><span>${state.user.disponible === "1" ? "Disponible" : "No disponible"}</span></label>${icon("TruckIcon")}</div>
+    <section class="requests-section" aria-labelledby="requests-heading">
+      <div class="requests-heading"><h2 id="requests-heading">Solicitudes de viaje</h2><p class="muted number">${count} ${count === 1 ? "disponible" : "disponibles"}</p></div>
+      <div class="requests-list">${count ? state.pending.map(requestCard).join("") : `<div class="empty-state"><h3>${state.user.disponible === "1" ? "Por ahora no hay solicitudes" : "Estás fuera de servicio"}</h3><p class="muted">${state.user.disponible === "1" ? "Las nuevas solicitudes aparecerán aquí automáticamente." : "Activa Disponible cuando quieras recibir viajes."}</p></div>`}</div>
+    </section>`
   );
+}
+function passengerOffers(j) {
+  const offers = j.ofertas || [];
+  return `<section class="requests-section" aria-labelledby="offers-heading"><div class="requests-heading"><h2 id="offers-heading">Propuestas de choferes</h2><p class="small muted">${offers.length} ${offers.length === 1 ? "propuesta" : "propuestas"}</p></div>
+    ${offers.length ? `<p class="hint">Compara los precios y elige con quién viajar. Al aceptar, se confirma un solo chofer.</p><div class="requests-list">${offers.map((offer) => {
+      const c = offer.conductor_info;
+      const own = offer.autor === state.user.id;
+      const offerId = esc(offer.id);
+      return `<article class="request-card offer-card" aria-labelledby="offer-${offerId}-driver">
+        <div class="offer-heading"><img class="offer-car" src="/assets/car-white.png" alt="" width="72" height="48"><div><h3 id="offer-${offerId}-driver">${esc(c.nombre)}</h3><p class="small muted">${esc(c.marca)} ${esc(c.modelo)} · ${esc(c.color)}</p></div><strong class="offer-price">${money(offer.importe)}</strong></div>
+        <span class="plate">${esc(c.placa)}</span>
+        <p class="small muted">${own ? "Tu contraoferta" : "Precio del chofer"} · Vence en <span class="countdown" data-deadline="${offer.vence}"></span></p>
+        ${own ? '<p class="hint" role="status">Esperando la respuesta de este chofer. Puedes elegir otra propuesta.</p>' : `<div class="stack tight offer-actions"><button type="button" class="primary" data-action="aceptar-oferta" data-id="${j.id}" data-offer-id="${offerId}" data-change>Aceptar por ${money(offer.importe)}</button>
+        <details class="offer-negotiate"><summary>Proponer otro precio</summary><form class="form-grid offer-counteroffer" data-offer-id="${offerId}"><div class="field"><label for="offer-${offerId}-amount">Tu precio en soles</label><input id="offer-${offerId}-amount" name="importe" type="number" required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"></div><p class="error-text" role="alert" hidden></p><button type="submit" class="secondary" data-change>Enviar contraoferta</button></form></details>
+        <button type="button" class="text-button" data-action="rechazar-oferta" data-id="${j.id}" data-offer-id="${offerId}" data-change>Rechazar esta propuesta</button></div>`}
+      </article>`;
+    }).join("")}</div>` : '<div class="info-well"><h3>Esperando propuestas</h3><p>Varios choferes pueden enviar su precio. Las propuestas aparecerán aquí automáticamente.</p></div>'}
+  </section>`;
 }
 function tripView(j) {
   const driver = state.user.rol === "conductor";
+  if (j.estado === "no_elegido") {
+    const message = {
+      no_elegido: "El pasajero eligió la propuesta de otro chofer.",
+      rechazada: "La propuesta fue rechazada. Puedes buscar otra solicitud.",
+      reserva_vencida: "Se agotó el minuto para preparar tu precio.",
+      oferta_vencida: "Tu propuesta venció sin confirmarse.",
+      retirada: "Retiraste tu propuesta de esta solicitud.",
+      cambio_de_planes: "El pasajero canceló la solicitud.",
+    }[j.motivo_propuesta] || "La solicitud ya no está disponible para tu propuesta.";
+    return heading(`Viaje #${esc(j.id)}`, "Solicitud cerrada", message) + route(j) + '<button type="button" class="primary" id="new-trip">Ver solicitudes</button>';
+  }
   const myOffer = (j.oferta?.autor || j.conductor) === state.user.id;
-  const stateName = labels[j.estado];
+  const stateName = j.version === 2 && j.estado === "reservado" ? "Prepara tu propuesta"
+    : j.version === 2 && j.estado === "pendiente" && j.ofertas?.length ? "Elige tu chofer" : labels[j.estado];
   const deadline = {
     pendiente: j.busqueda_hasta,
     reservado: j.reserva_hasta,
@@ -497,10 +633,10 @@ function tripView(j) {
     ? `<details class="route-details"><summary>Ver recorrido</summary>${route(j)}</details>`
     : route(j);
   if (j.estado === "pendiente")
-    html += `<div class="info-well"><h3>Estamos buscando un conductor</h3><p>Recibirás su propuesta de precio aquí. Puedes esperar hasta 10 minutos.</p></div>`;
+    html += j.version === 2 ? passengerOffers(j) : `<div class="info-well"><h3>Estamos buscando un conductor</h3><p>Recibirás su propuesta de precio aquí. Puedes esperar hasta 10 minutos.</p></div>`;
   if (j.estado === "reservado")
     html += driver
-      ? `<form id="price-form" class="form-grid">${field("importe", "Tu precio en soles", "number", 'required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"')}<button type="submit" class="primary" data-change>Enviar propuesta</button></form>`
+      ? `<p class="hint">${j.version === 2 ? "Otros choferes también pueden proponer su precio. El pasajero elige con quién viajar." : "Prepara tu precio antes de que termine el plazo."}</p><form id="price-form" class="form-grid">${field("importe", "Tu precio en soles", "number", 'required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"')}<button type="submit" class="primary" data-change>Enviar propuesta</button></form>`
       : `<div class="info-well"><h3>Un conductor reservó tu solicitud</h3><p>Está preparando una propuesta. Te mostraremos el vehículo y el precio cuando la envíe.</p></div>`;
   if (j.estado === "ofertado")
     html += myOffer
@@ -517,7 +653,7 @@ function tripView(j) {
     html += `<button type="button" class="secondary" data-dialog="incidencia" data-id="${j.id}" data-change>Reportar incidencia</button>`;
   }
   if (!terminal(j) && j.estado !== "en_curso")
-    html += `<button type="button" class="text-button" data-dialog="cancelar" data-id="${j.id}" data-change>Cancelar viaje</button>`;
+    html += `<button type="button" class="text-button" data-dialog="cancelar" data-id="${j.id}" data-change>${driver && j.version === 2 && ["reservado", "ofertado"].includes(j.estado) ? "Retirar propuesta" : "Cancelar viaje"}</button>`;
   if (terminal(j)) {
     if (j.estado === "finalizado") html += paymentView(j, driver);
     else if (j.estado === "cancelado")
@@ -573,6 +709,43 @@ function adminView() {
   const cards = state.reviews.map((u) => `<article class="review-card"><div class="row between"><strong>${esc(u.nombre)}</strong><span class="review-status">${u.revision_estado === "rechazado" ? "Rechazado" : "Pendiente"}</span></div><p class="small muted">@${esc(u.usuario)} · ${esc(u.telefono)}</p><p>${esc(u.marca)} ${esc(u.modelo)} · ${esc(u.color)} · ${esc(u.placa)}</p>${u.revision_motivo ? `<p class="small">Motivo anterior: ${esc(u.revision_motivo)}</p>` : ""}<form class="review-form form-grid" data-id="${esc(u.id)}"><div class="field"><label for="review-reason-${esc(u.id)}">Motivo de rechazo</label><textarea id="review-reason-${esc(u.id)}" name="motivo" maxlength="500" placeholder="Escribe el motivo si rechazas la solicitud"></textarea></div><p class="error-text" role="alert" hidden></p><div class="review-actions"><button class="primary" type="submit" name="decision" value="aprobar">Aprobar</button>${u.revision_estado === "rechazado" ? "" : '<button class="secondary" type="submit" name="decision" value="rechazar">Rechazar</button>'}</div></form></article>`).join("");
   return `<div class="stack"><div><p class="eyebrow">Administración</p><h1>Solicitudes de choferes</h1><p class="muted">Revisa los datos antes de tomar una decisión.</p></div>${cards || '<div class="empty-state"><h3>No hay solicitudes por revisar</h3><p class="muted">Las solicitudes nuevas aparecerán aquí.</p></div>'}</div>`;
 }
+function currentScreen() {
+  if (!state.user) return `auth:${state.auth}`;
+  if (state.user.rol === "administrador") return "admin";
+  if (state.view !== "home") return state.view;
+  return state.trip ? `trip:${state.trip.id}:${state.trip.estado}:${state.trip.ofertas?.length ? "offers" : "waiting"}` : `home:${state.user.rol}`;
+}
+function capturePanelState() {
+  const detailsKey = (el) => el.querySelector("form")?.dataset.offerId || el.querySelector("summary")?.textContent;
+  return {
+    controls: [...panel.querySelectorAll("input[id],textarea[id],select[id]")].map((el) => ({ id: el.id, value: el.value, checked: el.checked })),
+    open: [...panel.querySelectorAll("details[open]")].map(detailsKey),
+    focused: panel.contains(document.activeElement) ? document.activeElement.id : null,
+    start: panel.contains(document.activeElement) ? document.activeElement.selectionStart : null,
+    end: panel.contains(document.activeElement) ? document.activeElement.selectionEnd : null,
+    scroll: $("#panel-scroll").scrollTop,
+  };
+}
+function restorePanelState(draft) {
+  const sheetPosition = window.rideSheet?.position;
+  for (const saved of draft.controls) {
+    const el = document.getElementById(saved.id);
+    if (el && panel.contains(el)) { el.value = saved.value; if ("checked" in el) el.checked = saved.checked; }
+  }
+  panel.querySelectorAll("details").forEach((el) => {
+    const key = el.querySelector("form")?.dataset.offerId || el.querySelector("summary")?.textContent;
+    el.open = draft.open.includes(key);
+  });
+  const focused = draft.focused && document.getElementById(draft.focused);
+  if (focused && panel.contains(focused)) {
+    focused.focus({ preventScroll: true });
+    if (draft.start !== null && typeof focused.setSelectionRange === "function") {
+      try { focused.setSelectionRange(draft.start, draft.end); } catch { /* Number inputs do not expose a text selection. */ }
+    }
+  }
+  $("#panel-scroll").scrollTop = draft.scroll;
+  if (sheetPosition) window.rideSheet.set(sheetPosition, false);
+}
 function render(force = false) {
   const signature = JSON.stringify([
     state.user?.id,
@@ -583,6 +756,8 @@ function render(force = false) {
     state.trip?.id,
     state.trip?.estado,
     state.trip?.oferta?.id,
+    state.trip?.ofertas?.map((offer) => [offer.id, offer.autor, offer.conductor, offer.importe, offer.vence, offer.estado,
+      offer.conductor_info?.nombre, offer.conductor_info?.marca, offer.conductor_info?.modelo, offer.conductor_info?.color, offer.conductor_info?.placa]),
     state.trip?.pago,
     state.trip?.incidencias?.length,
     state.pending.map((j) => j.id),
@@ -591,7 +766,10 @@ function render(force = false) {
     state.practice,
   ]);
   if (!force && signature === state.signature) return;
+  const mode = currentScreen();
+  const draft = mode === renderedMode ? capturePanelState() : null;
   state.signature = signature;
+  closePlaceSearch();
   const logged = !!state.user;
   $("#navigation").hidden = !logged;
   $("#menu-toggle").hidden = !logged;
@@ -626,10 +804,11 @@ function render(force = false) {
           : state.user.rol === "pasajero"
             ? newTripView()
             : driverHome();
-  const mode = `${state.user?.id}:${state.view}:${state.auth}:${state.trip?.id}:${state.trip?.estado}`;
+  const expanded = !logged || state.user.rol === "administrador" || state.view !== "home" || !!state.trip?.ofertas?.length;
+  window.rideSheet?.sync(`${state.user?.id}:${mode}`, expanded ? "expanded" : "medium");
   if (mode !== renderedMode) {
     renderedMode = mode;
-    $("#panel").scrollTop = 0;
+    $("#panel-scroll").scrollTop = 0;
     window.scrollTo(0, 0);
   }
   hydrateIcons();
@@ -646,6 +825,7 @@ function render(force = false) {
   }
   tick();
   setOnline(state.online);
+  if (draft) restorePanelState(draft);
 }
 function tick() {
   const now = Date.now() / 1000 + state.offset;
@@ -754,7 +934,7 @@ function closeDialog() {
 function openReason(type, id) {
   dialogAction = { type, id };
   $("#dialog-title").textContent =
-    type === "cancelar" ? "Cancelar viaje" : "Reportar incidencia";
+    type === "cancelar" ? (state.user?.rol === "conductor" && state.trip?.version === 2 && ["reservado", "ofertado"].includes(state.trip.estado) ? "Retirar propuesta" : "Cancelar viaje") : "Reportar incidencia";
   $("#dialog-submit").textContent =
     type === "cancelar" ? "Cancelar viaje" : "Registrar incidencia";
   const options =
@@ -806,7 +986,7 @@ document.addEventListener("click", async (e) => {
     if (b.dataset.point) {
       state.selecting = b.dataset.point;
       updateSelection();
-      if (innerWidth <= 800) $("#map").scrollIntoView({ block: "start" });
+      if (innerWidth <= 800) window.rideSheet?.set("compact");
       $("#map").focus({ preventScroll: true });
     }
     if (b.id === "gps") {
@@ -840,7 +1020,7 @@ document.addEventListener("click", async (e) => {
     }
     if (b.dataset.action) {
       const body = b.dataset.action.includes("oferta")
-        ? { oferta_id: state.trip.oferta.id }
+        ? { oferta_id: b.dataset.offerId || state.trip.oferta.id }
         : {};
       await mutate(`/viajes/${b.dataset.id}/${b.dataset.action}`, body);
     }
@@ -888,11 +1068,13 @@ document.addEventListener("focusin", (e) => {
   ) {
     state.selecting = e.target.id;
     updateSelection();
+    schedulePlaceSearch(e.target);
   }
 });
 document.addEventListener("input", (e) => {
   if (["origen", "destino"].includes(e.target.id)) {
     const k = e.target.id;
+    schedulePlaceSearch(e.target);
     if (state.points[k]) {
       state.points[k].resolviendo = false;
       state.points[k].nombre = e.target.value;
@@ -905,6 +1087,35 @@ document.addEventListener("input", (e) => {
       }
       updateSelection();
     }
+  }
+});
+
+document.addEventListener("focusout", (e) => {
+  if (e.target.id === placeSearch?.key) closePlaceSearch();
+});
+document.addEventListener("pointerdown", (e) => {
+  const option = e.target.closest("[data-place-index]");
+  if (option && placeSearch) {
+    e.preventDefault();
+  }
+});
+document.addEventListener("click", (e) => {
+  const option = e.target.closest("[data-place-index]");
+  if (option && placeSearch) choosePlace(Number(option.dataset.placeIndex));
+});
+document.addEventListener("keydown", (e) => {
+  const search = placeSearch;
+  if (!search || e.target.id !== search.key) return;
+  if (e.key === "Escape") { e.preventDefault(); closePlaceSearch(); return; }
+  if (e.key === "Enter" && search.items.length) {
+    e.preventDefault();
+    choosePlace(search.active < 0 ? 0 : search.active);
+  }
+  if (["ArrowDown", "ArrowUp"].includes(e.key) && search.items.length) {
+    e.preventDefault();
+    search.active = (search.active + (e.key === "ArrowDown" ? 1 : search.active < 0 ? 0 : -1) + search.items.length) % search.items.length;
+    paintPlaceSearch(search, `${search.items.length} ${search.items.length === 1 ? "sugerencia disponible" : "sugerencias disponibles"}`);
+    $(`#${search.key}-suggestion-${search.active}`)?.scrollIntoView({ block: "nearest" });
   }
 });
 document.addEventListener("change", async (e) => {
@@ -987,10 +1198,10 @@ document.addEventListener("submit", async (e) => {
       await mutate(`/viajes/${state.trip.id}/ofertar`, {
         importe: Math.round(Number(data.importe) * 100),
       });
-    if (form.id === "counteroffer-form")
+    if (form.id === "counteroffer-form" || form.classList.contains("offer-counteroffer"))
       await mutate(`/viajes/${state.trip.id}/contraofertar`, {
         importe: Math.round(Number(data.importe) * 100),
-        oferta_id: state.trip.oferta.id,
+        oferta_id: form.dataset.offerId || state.trip.oferta.id,
       });
     if (form.id === "dialog-form") {
       submit.disabled = true;
@@ -1015,7 +1226,7 @@ document.addEventListener("submit", async (e) => {
       render(true);
     }
   } catch (err) {
-    const error = $("#form-error", form) || $("#dialog-error", form);
+    const error = $("#form-error", form) || $("#dialog-error", form) || $(".error-text", form);
     if (error) {
       error.textContent = err.message;
       error.hidden = false;
@@ -1056,6 +1267,10 @@ document.addEventListener("keydown", (e) => {
 });
 $("#action-dialog").addEventListener("cancel", () => (dialogAction = null));
 setInterval(tick, 1000);
+window.rideSheet = window.createRideSheet?.({ onLayout: (mobile, settled) => {
+  map?.invalidateSize({ pan: false });
+  if (mobile && settled && !state.selecting) fitVisibleRoute();
+} });
 (async () => {
   try {
     const [session, icons] = await Promise.all([

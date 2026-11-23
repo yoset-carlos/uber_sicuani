@@ -7,7 +7,7 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 header('X-Frame-Options: DENY');
 header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 $path=parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH) ?: '/';
-if (!str_starts_with($path,'/api')) { require dirname(__DIR__).'/views/app.php'; exit; }
+if (!str_starts_with($path,'/api')) { header('Cache-Control: no-cache'); require dirname(__DIR__).'/views/app.php'; exit; }
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 ini_set('session.use_strict_mode','1');
@@ -90,6 +90,7 @@ try {
         $method==='GET' && $path==='/api/estado'=>snapshot($journeys,$u),
         $method==='POST' && $path==='/api/disponibilidad'=>availability($store,$u,$body),
         $method==='POST' && $path==='/api/mapa/direccion'=>$u['rol']==='pasajero'?(new Geocoder($store))->reverse($body):throw new ApiError('PERMISO','Solo pasajeros pueden seleccionar puntos de recogida y destino.',403),
+        $method==='POST' && $path==='/api/mapa/buscar'=>$u['rol']==='pasajero'?(new Geocoder($store))->search($body):throw new ApiError('PERMISO','Solo pasajeros pueden buscar direcciones.',403),
         $method==='POST' && $path==='/api/viajes'=>$journeys->action($uid,'crear','',$body,(string)($body['peticion_id']??'')),
         $method==='GET' && preg_match('#^/api/viajes/([1-9]\d*)$#D',$path,$m)===1=>$journeys->get($uid,$m[1]),
         $method==='POST' && preg_match('#^/api/viajes/([1-9]\d*)/([a-z-]+)$#D',$path,$m)===1=>$journeys->action($uid,$m[2],$m[1],$body,(string)($body['peticion_id']??'')),

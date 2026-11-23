@@ -6,7 +6,8 @@ final class Journeys
     public function __construct(public readonly Store $store) {}
     private function execute(string $uid,string $action,string $id,array $body=[],string $nonce=''): string
     {
-        $result=$this->store->run('journey',[$uid,$action,$id,json_encode($body,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$nonce]);
+        $multi=$action==='crear' || ($id!=='' && ($this->raw($id)['version']??1)===2);
+        $result=$this->store->run($multi?'journey-multi':'journey',[$uid,$action,$id,json_encode($body,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$nonce]);
         if ($result[0]==='ok') return $result[1];
         [$status,$message]=match($result[1]) {
             'PERMISO'=>[403,'No tienes permiso para realizar esta acción.'],
@@ -35,17 +36,44 @@ final class Journeys
     {
         $this->execute($uid,'sincronizar',$id);
         $j=$this->raw($id);
-        if ($uid!==$j['pasajero'] && $uid!==($j['conductor']??null)) throw new ApiError('PERMISO','Este viaje no pertenece a tu cuenta.',403);
-        return $this->present($j);
+        if ($uid!==$j['pasajero'] && $uid!==($j['conductor']??null) && !isset($j['participaciones'][$uid])) throw new ApiError('PERMISO','Este viaje no pertenece a tu cuenta.',403);
+        return $this->present($j,$uid);
     }
-    private function raw(string $id): array { return json_decode($this->store->redis->hget($this->store->prefix.'viaje:'.$id,'datos'),true,512,JSON_THROW_ON_ERROR); }
-    private function present(array $j): array
+    private function raw(string $id): array {
+        $raw=$this->store->redis->hget($this->store->prefix.'viaje:'.$id,'datos');
+        if ($raw===null) throw new ApiError('NO_EXISTE','No encontramos ese viaje.',404);
+        return json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+    }
+    private function present(array $j,string $uid): array
     {
+        if (($j['version']??1)===2) {
+            $entries=$j['participaciones'];
+            $j['ofertas']=[];
+            if ($uid===$j['pasajero']) {
+                foreach ($entries as $driver=>$entry) {
+                    if ($entry['estado']!=='ofertado') continue;
+                    $offer=$entry['oferta'];
+                    $offer['conductor_info']=array_intersect_key($this->store->user((string)$driver),array_flip(['id','nombre','marca','modelo','color','placa']));
+                    $j['ofertas'][]=$offer;
+                }
+                usort($j['ofertas'],static fn($a,$b)=>(int)$a['conductor']<=>(int)$b['conductor']);
+            } elseif (($j['conductor']??null)!==$uid) {
+                $entry=$entries[$uid];
+                // A competing driver can see only their own proposal and the public route.
+                $j=array_intersect_key($j,array_flip(['version','id','pasajero','estado','origen','destino','creado','busqueda_hasta','pago']));
+                $j['estado']=in_array($entry['estado'],['reservado','ofertado'],true)?$entry['estado']:'no_elegido';
+                $j['motivo_propuesta']=$entry['estado'];
+                $j['conductor']=$uid;
+                $j['reserva_hasta']=$entry['reserva_hasta'];
+                if (isset($entry['oferta'])) $j['oferta']=$entry['oferta'];
+            }
+            unset($j['participaciones']);
+        }
         unset($j['excluidos']);
         $j['incidencias']=array_values($j['incidencias']??[]);
         $j['pasajero_info']=array_intersect_key($this->store->user($j['pasajero']),array_flip(['id','nombre']));
         // Before a price is proposed, vehicle identity remains private to the driver.
-        if (isset($j['conductor'], $j['oferta']) && $j['estado']!=='reservado') $j['conductor_info']=Store::safeUser($this->store->user($j['conductor']));
+        if (isset($j['conductor'], $j['oferta']) && $j['estado']!=='reservado' && $j['estado']!=='no_elegido') $j['conductor_info']=Store::safeUser($this->store->user($j['conductor']));
         return $j;
     }
     public function pending(string $uid): array
@@ -57,14 +85,14 @@ final class Journeys
         $out=[];
         foreach ($this->store->redis->smembers($this->store->prefix.'viajes:pendientes') as $id) {
             $j=$this->raw($id);
-            if (!isset($j['excluidos'][$uid]) && $j['estado']==='pendiente') $out[] = array_intersect_key($j,array_flip(['id','origen','destino','creado','busqueda_hasta','estado']));
+            if (!isset($j['excluidos'][$uid]) && $j['estado']==='pendiente') $out[] = array_intersect_key($j,array_flip(['version','id','origen','destino','creado','busqueda_hasta','estado']));
         }
         usort($out,static fn($a,$b)=>$a['creado']<=>$b['creado']); return $out;
     }
     public function history(string $uid): array
     {
         $this->settle($uid); $out=[];
-        foreach ($this->store->redis->smembers($this->store->prefix.'historial:'.$uid) as $id) $out[]=$this->present($this->raw($id));
+        foreach ($this->store->redis->smembers($this->store->prefix.'historial:'.$uid) as $id) $out[]=$this->present($this->raw($id),$uid);
         usort($out,static fn($a,$b)=>(int)$b['id']<=>(int)$a['id']); return $out;
     }
     public function action(string $uid,string $action,string $id,array $input,string $nonce): array

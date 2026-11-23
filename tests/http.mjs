@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 const env = {
   ...process.env,
@@ -70,10 +71,19 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const page = await fetch(origin);
+  const pageHtml = await page.text();
   check(
-    page.status === 200 && (await page.text()).includes("Uber Sicuani"),
+    page.status === 200 && pageHtml.includes("Uber Sicuani"),
     "Página principal sirve HTML",
   );
+  check(page.headers.get("cache-control") === "no-cache", "HTML revalida la versión de la interfaz");
+  for (const asset of ["app.js", "sheet.js", "app.css"]) {
+    const bytes = readFileSync(new URL(`../public/assets/${asset}`, import.meta.url));
+    const version = createHash("sha256").update(bytes).digest("hex").slice(0, 12);
+    const path = `/assets/${asset}?v=${version}`;
+    check(pageHtml.includes(path), `${asset} usa una URL vinculada a su contenido actual`);
+    check(Buffer.from(await (await fetch(origin + path)).arrayBuffer()).equals(bytes), `${asset} versionado sirve el contenido actualizado`);
+  }
   for (const path of [
     "/.env",
     "/composer.json",
@@ -233,6 +243,7 @@ try {
   );
   check((await p.request("/estado")).status === 401, "API requiere sesión");
   await p.request("/sesion");
+  check((await p.request("/mapa/buscar", { texto: "Sicuani" })).status === 401, "Búsqueda requiere sesión");
   check(
     (await p.request("/login", { usuario: "passenger", password }, false))
       .status === 403,
@@ -245,6 +256,10 @@ try {
     s.login("second"),
     lab.login("lab"),
   ]);
+  check((await p.request("/mapa/buscar", { texto: "Sicuani" }, false)).status === 403, "Búsqueda requiere CSRF");
+  check((await d1.request("/mapa/buscar", { texto: "Sicuani" })).status === 403, "Conductor no puede buscar direcciones");
+  check((await p.request("/mapa/buscar", { texto: ["Sicuani"] })).status === 422, "Búsqueda valida texto");
+  check((await p.request("/mapa/buscar", { texto: "ab" })).status === 422, "Búsqueda requiere tres caracteres");
   check(
     (await p.request("/sesion")).datos.usuario.rol === "pasajero",
     "Sesión reconoce rol pasajero",
@@ -296,25 +311,56 @@ try {
     (await s.request("/viajes/" + id)).status === 403,
     "Otro pasajero no consulta viaje",
   );
+  const visibleToBoth = await Promise.all([d1.request("/estado"), d2.request("/estado")]);
+  check(
+    visibleToBoth.every((result) => result.datos.pendientes.some((trip) => trip.id === id)),
+    "La misma solicitud aparece en las dos sesiones de choferes disponibles",
+  );
+  check(
+    (await d1.request("/estado")).datos.pendientes.some((trip) => trip.id === id) &&
+      (await d2.request("/estado")).datos.pendientes.some((trip) => trip.id === id),
+    "Consultar una solicitud no la consume ni la oculta al otro chofer",
+  );
+  await d2.request("/disponibilidad", { disponible: false });
+  check(
+    (await d2.request("/estado")).datos.pendientes.length === 0 &&
+      (await d1.request("/estado")).datos.pendientes.some((trip) => trip.id === id),
+    "Un chofer no disponible no recibe solicitudes; el disponible sí",
+  );
+  await d2.request("/disponibilidad", { disponible: true });
+  check(
+    (await d2.request("/estado")).datos.pendientes.some((trip) => trip.id === id),
+    "Al activar disponibilidad, el segundo chofer recibe la solicitud pendiente",
+  );
   const reserved = await Promise.all([
     d1.request(`/viajes/${id}/reservar`, bodyNonce({})),
     d2.request(`/viajes/${id}/reservar`, bodyNonce({})),
   ]);
   check(
-    reserved.filter((x) => x.status === 200).length === 1 &&
-      reserved.filter((x) => x.status === 409).length === 1,
-    "Reserva concurrente por HTTP: una gana",
+    reserved.every((x) => x.status === 200),
+    "Dos choferes pueden preparar propuestas simultáneamente",
   );
-  const driver = reserved[0].status === 200 ? d1 : d2;
+  const driver = d1;
+  const otherDriver = d2;
+  check(
+    (await otherDriver.request("/estado")).datos.viaje.estado === "reservado",
+    "El segundo chofer conserva su preparación independiente",
+  );
   response = await driver.request(
     `/viajes/${id}/ofertar`,
     bodyNonce({ importe: 1050 }),
   );
   check(response.status === 200, "Conductor propone precio");
   const offer = response.datos.oferta.id;
+  const secondOffer = await otherDriver.request(`/viajes/${id}/ofertar`, bodyNonce({ importe: 1250 }));
+  check(secondOffer.status === 200, "El segundo chofer también puede proponer precio");
+  const comparison = (await p.request("/estado")).datos.viaje;
+  check(comparison.ofertas.length === 2 && !comparison.conductor, "Pasajero compara dos propuestas sin chofer asignado");
+  check(!secondOffer.datos.ofertas && !secondOffer.datos.participaciones, "Cada chofer solo ve su propia propuesta");
   response = await p.request(`/viajes/${id}/contraofertar`, bodyNonce({ oferta_id: offer, importe: 900 }));
-  check(response.status === 200 && response.datos.oferta.importe === 900, "Pasajero envía contraoferta por HTTP");
-  const counter = response.datos.oferta.id;
+  const counterOffer = response.datos.ofertas.find((item) => item.importe === 900);
+  check(response.status === 200 && counterOffer, "Pasajero negocia una propuesta sin reemplazar las demás");
+  const counter = counterOffer.id;
   check(
     (
       await driver.request(
@@ -324,6 +370,9 @@ try {
     ).datos.precio === 900,
     "Conductor acepta la contraoferta por HTTP",
   );
+  check(!(await otherDriver.request("/estado")).datos.viaje, "Aceptar libera al chofer no elegido");
+  check((await otherDriver.request(`/viajes/${id}`)).datos.estado === "no_elegido", "El otro chofer recibe el cierre de su propuesta");
+  check((await p.request(`/viajes/${id}/aceptar-oferta`, bodyNonce({ oferta_id: secondOffer.datos.oferta.id }))).status === 409, "No se pueden confirmar dos choferes");
   check(
     (await p.request(`/viajes/${id}/iniciar`, bodyNonce({}))).status === 403,
     "Pasajero no inicia viaje",

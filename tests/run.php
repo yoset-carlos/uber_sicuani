@@ -29,10 +29,16 @@ try {
  check($newDriver['rol']==='conductor' && $newDriver['aprobado']==='0','Chofer con usuario y celular nuevos se registra pendiente');
  rejects(fn()=>$accounts->login('prueba','incorrecta'),'CREDENCIALES','Contraseña incorrecta rechazada');
  $points=['origen'=>['lat'=>-14.2714,'lng'=>-71.2292,'nombre'=>'Plaza Sicuani'],'destino'=>['lat'=>-14.2755,'lng'=>-71.2351,'nombre'=>'Estadio']];
- $new=fn(string $uid)=>$journeys->action($uid,'crear','',$points,nonce());
+ // Keep coverage for pre-existing version 1 journeys during the transition.
+ $legacyNew=function(string $uid,string $request)use($store,$journeys,$points):array {
+  $result=$store->run('journey',[$uid,'crear','',json_encode($points,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$request]);
+  if($result[0]!=='ok')throw new ApiError($result[1],'Solicitud rechazada.',409);
+  return $journeys->get($uid,$result[1]);
+ };
+ $new=fn(string $uid)=>$legacyNew($uid,nonce());
  $action=fn(string $uid,string $name,string $id,array $body=[])=>$journeys->action($uid,$name,$id,$body,nonce());
- $request=nonce();$j=$journeys->action($pass['id'],'crear','',$points,$request);$id=$j['id'];
- check($journeys->action($pass['id'],'crear','',$points,$request)['id']===$id,'Crear viaje es idempotente');
+ $request=nonce();$j=$legacyNew($pass['id'],$request);$id=$j['id'];
+ check($legacyNew($pass['id'],$request)['id']===$id,'Crear viaje heredado es idempotente');
  rejects(fn()=>$new($pass['id']),'OCUPADO','Un viaje activo por pasajero');
  rejects(fn()=>$journeys->get($pass2['id'],$id),'PERMISO','Consulta de otro pasajero bloqueada');
  check(count($journeys->pending($d[1]['id']))===1,'Solicitud visible para conductor disponible');

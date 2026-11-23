@@ -25,6 +25,8 @@ La cuenta `laboratorio` solo puede usar las prácticas si `PRACTICE_ENABLED=1`. 
 
 ### Recursos de la interfaz
 
+En celular (hasta 800 px), el mapa ocupa el fondo y los controles viven en un panel inferior con tres alturas: compacto (22 %), medio (58 %) y ampliado (90 %, dejando espacio para la navegación). El tirador se puede arrastrar o manejar con flechas, Inicio/Fin y los botones Subir/Bajar. Los formularios amplían el panel al recibir foco; la posición, el desplazamiento y los campos en edición se conservan cuando llegan nuevas propuestas. La interfaz utiliza azul petróleo y mantiene mapa y panel lateral en escritorio. La altura se adapta al área visible y al teclado mediante `visualViewport` cuando está disponible.
+
 Leaflet, Inter y los iconos se sirven localmente. Las teselas del mapa necesitan internet. Los recursos preparados están en `public/assets/`; para regenerarlos:
 
 ```powershell
@@ -38,9 +40,9 @@ Las dependencias de Node se usan únicamente para preparar recursos y ejecutar v
 
 - Acceso unificado y registro web con elección Pasajero/Chofer. Los pasajeros acceden al registrarse; los choferes quedan pendientes de aprobación manual.
 - Mapa centrado en Sicuani; puntos manuales con nombres/referencias; GPS opcional para el origen. También puede enfocarse el mapa, desplazarse con el teclado y presionar Enter para fijar el centro como punto seleccionado.
-- Solicitud, reserva exclusiva, precio propuesto, aceptación/rechazo, inicio y fin del viaje.
-- Un solo viaje activo por usuario. El conductor queda ocupado desde la reserva.
-- Reserva de 1 minuto, oferta de 5 minutos, búsqueda original de 10 minutos y cancelación tras 30 minutos confirmado sin inicio. Una reserva/oferta obtenida a tiempo conserva su propio plazo.
+- Solicitudes con propuestas de varios choferes: cada uno prepara y envía su precio; el pasajero compara precio y vehículo, negocia una propuesta o elige con quién viajar.
+- Un solo viaje activo por usuario. Cada chofer participa en una solicitud a la vez mientras prepara o espera respuesta; su participación no bloquea a los demás choferes.
+- Preparación de 1 minuto por chofer, propuesta de 5 minutos, búsqueda original de 10 minutos y cancelación tras 30 minutos confirmado sin inicio. Cada preparación/propuesta obtenida a tiempo conserva su propio plazo.
 - Exclusión del conductor tras rechazo o vencimiento. Reapertura solamente mientras quede tiempo de búsqueda.
 - Cancelación con motivo antes del inicio; incidencias con motivo/comentario durante el viaje.
 - Finalización con pago pendiente; registro posterior de Efectivo/Yape simulado; historial persistente y ranking de conductores por viajes finalizados.
@@ -50,7 +52,9 @@ La línea discontinua une los dos puntos como referencia: **no representa una ru
 
 Al marcar o mover un punto, PHP consulta Photon y completa la dirección de la calle próxima. Las coordenadas se conservan internamente, sin mostrarse en los inputs. Seleccionar el campo o su botón activa el punto; otros clics y el arrastre del marcador lo cambian sin reajustar el zoom. Una nueva selección reemplaza la dirección anterior; escribir manualmente durante la búsqueda conserva ese texto y descarta la respuesta tardía. Los borradores antiguos con coordenadas como texto se convierten al abrir la pantalla.
 
-`GEOCODER_URL` configura el servicio de geocodificación inversa (por defecto, la demo de Photon). PHP aplica caché de 7 días, un intervalo global mínimo de 1,2 segundos y consultas solo por selección del usuario. El servicio demo admite uso razonable sin garantizar disponibilidad: [documentación de Photon](https://github.com/komoot/photon). Si no hay conexión o dirección disponible, se conserva el punto y se pide escribir una dirección/referencia, sin inventar calles ni mostrar coordenadas como sustituto. Elegir un proveedor con capacidad adecuada antes de ampliar el uso.
+Al escribir al menos tres caracteres en recogida o destino, aparecen hasta cinco sugerencias de Photon, con prioridad alrededor de Sicuani y búsqueda en Perú. Se puede elegir con toque, clic o flechas y Enter; Escape cierra la lista. Elegir un lugar guarda sus coordenadas y centra el marcador; se mantiene la edición manual de referencias y la selección por mapa o GPS. La cobertura depende de los lugares registrados en OpenStreetMap.
+
+`GEOCODER_URL` configura la geocodificación inversa y `GEOCODER_SEARCH_URL` la búsqueda por texto (por defecto, `https://photon.komoot.io/api`). El endpoint autenticado `POST /api/mapa/buscar` recibe `{texto}` y devuelve `{estado, resultados}`; cada resultado incluye `nombre`, `direccion`, `etiqueta`, `lat` y `lng`. PHP aplica caché de 7 días y un intervalo global mínimo de 1,2 segundos compartido entre búsqueda e inversa; las búsquedas esperan 400 ms sin escribir y solo reintentan si siguen vigentes. El servicio demo admite uso razonable sin garantizar disponibilidad: [documentación de Photon](https://github.com/komoot/photon). Si no hay conexión o dirección disponible, se permite marcar el punto y escribir una referencia. Elegir un proveedor con capacidad adecuada antes de ampliar el uso.
 
 ## Arquitectura y consistencia
 
@@ -116,6 +120,8 @@ Todas las rutas usan `/api`. Las consultas son GET y las acciones POST. Primero 
 
 Los puntos llevan `nombre`, `lat`, `lng`. `ofertar` recibe `importe` entero en céntimos, entre 100 y 100000; aceptar/rechazar recibe `oferta_id`; pago recibe `metodo: "efectivo"/"yape"`; cancelación/incidencia recibe `motivo` y `comentario`. Todas las acciones sobre viajes requieren `peticion_id` único (16–80 caracteres alfanuméricos, guion o guion bajo).
 
+Las nuevas solicitudes usan `version: 2`. `reservar` inicia una preparación individual sin retirar la solicitud para otros choferes. El pasajero recibe `ofertas` (lista con ID, autor, chofer, importe, vencimiento y `conductor_info`) mientras el viaje permanece `pendiente`. `contraofertar`, `aceptar-oferta` y `rechazar-oferta` operan únicamente sobre el `oferta_id` indicado. La aceptación confirma un solo chofer en una operación atómica y libera a los demás. Rechazar o vencer una propuesta no afecta a las otras; cancelar como chofer antes de la confirmación retira solo su participación. El chofer recibe una vista personal `reservado`/`ofertado` y únicamente su oferta, o `no_elegido` cuando termina su participación. Los viajes anteriores sin versión conservan el flujo original para no interrumpirlos.
+
 Registro recibe `rol: "pasajero"/"conductor"` (valor por defecto pasajero para compatibilidad) y, en conductor, `placa`, `color`, `marca`, `modelo`. El registro de chofer devuelve `usuario: null`, `cuenta` sin secretos y `pendiente_aprobacion: true`; no inicia sesión. El servidor decide la aprobación y los permisos de laboratorio, sin aceptar privilegios enviados por el cliente. Un inicio de sesión con credenciales válidas pero sin aprobación responde403 con `PENDIENTE_APROBACION`.
 
 Respuestas: `{ "ok": true, "datos": ... }` o `{ "ok": false, "error": { "codigo": "...", "mensaje": "...", "peticion": "..." } }`. Errores: 401 sesión, 403 permisos/CSRF, 404 recurso/acción, 409 conflicto, 422 validación, 429 límite y 503 indisponibilidad. Ante 409 o reconexión consultar nuevamente el estado.
@@ -127,6 +133,8 @@ composer test
 npm.cmd run test:http
 npm.cmd run test:outage
 npm.cmd run check
+npm.cmd run test:sheet
+npm.cmd run test:autocomplete
 node tests/load.mjs
 php scripts/backup.php
 php scripts/verify-restore.php storage/backups/ARCHIVO.json
@@ -134,11 +142,11 @@ php tests/account-cli.php
 powershell -NoProfile -File tests/driver-wizard.ps1
 ```
 
-- Servicios: concurrencia con dos procesos PHP reales; unicidad, permisos, transiciones, idempotencia, ranking, límites temporales y laboratorio contra Redis real.
+- Servicios: concurrencia con dos procesos PHP reales; unicidad, permisos, transiciones, idempotencia, ranking, límites temporales y laboratorio contra Redis real. `composer test` también verifica propuestas múltiples, elección concurrente, privacidad entre choferes y vencimientos independientes, además de conservar la cobertura del flujo heredado.
 - HTTP: servidor temporal en 8082; cookies, CSRF, roles, tipos inválidos y recorrido completo.
 - Indisponibilidad: servidor temporal en 8084 apuntado a un puerto sin Redis; verifica respuesta503 sin secretos y acceso recuperado al volver a la conexión correcta. No detiene el servicio real.
 - Carga: servidor temporal en 8083, tres sesiones por 15 minutos y polling cada 5 segundos. Guarda latencias, errores y número de peticiones en `storage/load-report.json`. Es una simulación de clientes; no reemplaza la prueba con tres teléfonos físicos.
-- Pruebas y restauraciones usan DB 15 y prefijos aleatorios propios, separados de la aplicación. **No ejecutan FLUSHDB ni limpiezas globales.** Conservan sus fixtures para inspección.
+- Pruebas y restauraciones usan DB 15 y prefijos aleatorios propios, separados de la aplicación. **No ejecutan FLUSHDB ni limpiezas globales.** Conservan sus fixtures para inspección, excepto la prueba de propuestas múltiples, que elimina únicamente las claves de su propio prefijo al terminar.
 - La copia manual usa SCAN/DUMP y la restauración verifica cada contenido en claves nuevas, sin REPLACE. Para obtener una copia consistente, detener temporalmente todas las peticiones de la aplicación: incluso una consulta puede aplicar un vencimiento. Usar una versión compatible de Redis para restaurar.
 - AOF está habilitado en el Redis local de WSL2. Las copias y credenciales locales contienen datos privados y no deben servirse ni añadirse a Git.
 

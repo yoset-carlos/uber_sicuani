@@ -3,7 +3,9 @@
   "private": true,
   "scripts": {
     "assets": "node scripts/assets.mjs",
-    "check": "node --check public/assets/app.js",
+    "check": "node --check public/assets/app.js && node --check public/assets/sheet.js",
+    "test:autocomplete": "node tests/autocomplete.mjs",
+    "test:sheet": "node tests/sheet.mjs",
     "test:http": "node tests/http.mjs",
     "test:outage": "node tests/outage.mjs"
   },
