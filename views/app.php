@@ -23,7 +23,7 @@
         <button type="button" data-view="home" aria-current="page">Viajar</button>
         <button type="button" data-view="history">Actividad</button>
       </nav>
-      <div class="header-end"><span class="demo-label">Viajes simulados</span><button type="button" id="menu-toggle" class="icon-button" aria-label="Abrir menú de cuenta" aria-expanded="false" aria-controls="account-menu" hidden><span data-icon="Bars3Icon"></span></button></div>
+      <div class="header-end"><a href="/como-funciona" aria-label="Guía: cómo funciona el sistema">Guía</a><span class="demo-label">Viajes simulados</span><button type="button" id="menu-toggle" class="icon-button" aria-label="Abrir menú de cuenta" aria-expanded="false" aria-controls="account-menu" hidden><span data-icon="Bars3Icon"></span></button></div>
       <div class="account-menu" id="account-menu" hidden><p id="account-name"></p><p id="account-role" class="muted"></p><button type="button" id="logout">Cerrar sesión</button></div>
     </header>
     <main class="workspace">

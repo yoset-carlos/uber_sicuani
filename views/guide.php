@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#00536b">
+  <meta name="description" content="Conoce cómo registrarte, solicitar un viaje, enviar propuestas y aprobar choferes en Uber Sicuani.">
+  <title>Cómo funciona — Uber Sicuani</title>
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="/assets/vendor/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/guide.css?v=<?= substr(hash_file('sha256', dirname(__DIR__).'/public/assets/guide.css'),0,12) ?>">
+</head>
+<body>
+  <a class="skip" href="#contenido">Ir al contenido</a>
+  <header class="site-header"><a class="brand" href="/">Uber <span>Sicuani</span></a><a class="button small" href="/">Ir al sistema <span aria-hidden="true">↗</span></a></header>
+  <main id="contenido">
+    <section class="hero" aria-labelledby="titulo">
+      <div><p class="eyebrow">GUÍA DEL SISTEMA</p><h1 id="titulo">De la solicitud<br>al destino.</h1><p class="intro">Conoce cada paso del viaje y lo que hace cada persona: pasajero, chofer y administrador.</p><div class="hero-actions"><a class="button" href="#pasajero">Quiero viajar <span aria-hidden="true">↓</span></a><a class="text-link" href="#conductor">Soy chofer <span aria-hidden="true">↗</span></a></div><p class="demo">Proyecto académico en Sicuani, Cusco. Los viajes y pagos son simulados.</p></div>
+      <div class="journey" aria-label="Resumen del viaje"><p class="eyebrow">UN VIAJE, PASO A PASO</p><ol><li><span>01</span><div><strong>El pasajero solicita</strong><p>Define dónde empieza y termina el viaje.</p></div></li><li><span>02</span><div><strong>Los choferes proponen</strong><p>Envían sus precios de forma independiente.</p></div></li><li><span>03</span><div><strong>Ambos acuerdan</strong><p>Se acepta una propuesta y se confirma un chofer.</p></div></li><li><span>04</span><div><strong>El chofer completa</strong><p>Inicia, finaliza y registra el pago simulado.</p></div></li></ol></div>
+    </section>
+    <nav class="section-nav" aria-label="Secciones de la guía"><a href="#pasajero">01 · Pasajero</a><a href="#conductor">02 · Chofer</a><a href="#administrador">03 · Administrador</a><a href="#preguntas">Preguntas frecuentes</a></nav>
+    <section class="role-section" id="pasajero" aria-labelledby="titulo-pasajero">
+      <div class="section-heading"><p class="eyebrow">01 / PASAJERO</p><h2 id="titulo-pasajero">Tú eliges<br>con quién viajar.</h2><p>Compara las propuestas disponibles y acuerda el precio antes de empezar.</p><a class="text-link" href="/">Entrar o crear mi cuenta <span aria-hidden="true">↗</span></a></div>
+      <ol class="steps"><li><h3>Crea tu cuenta</h3><p>En la pantalla de acceso, pulsa <strong>Crear una cuenta</strong> y elige Pasajero. Completa nombre, celular, usuario y contraseña. Al registrarte, puedes ingresar sin aprobación.</p></li><li><h3>Marca recogida y destino</h3><p>Busca un lugar, selecciónalo en el mapa o usa el GPS para la recogida. Añade referencias si necesitas precisar la ubicación y envía tu solicitud.</p></li><li><h3>Compara y negocia</h3><p>Recibe propuestas de distintos choferes con su precio y vehículo. Puedes aceptar, rechazar o proponer otro importe. Si haces una contrapropuesta, el chofer debe responder para llegar a un acuerdo.</p></li><li><h3>Confirma y realiza el viaje</h3><p>Al aceptarse una propuesta, queda confirmado un solo chofer y se liberan los demás. El chofer elegido inicia el viaje y lo finaliza al llegar al destino.</p></li><li><h3>Consulta tu actividad</h3><p>Revisa tus viajes en <strong>Actividad</strong>. Al finalizar, el pago queda pendiente hasta que el chofer lo registre como Efectivo o Yape simulado.</p></li></ol>
+    </section>
+    <section class="role-section" id="conductor" aria-labelledby="titulo-conductor">
+      <div class="section-heading"><p class="eyebrow">02 / CHOFER</p><h2 id="titulo-conductor">Conecta con<br>nuevas solicitudes.</h2><p>Primero se revisa tu cuenta. Después puedes activar tu disponibilidad y enviar propuestas.</p></div>
+      <ol class="steps"><li><h3>Registra tus datos y vehículo</h3><p>Elige Chofer al crear tu cuenta. Además de los datos personales, completa placa, color, marca y modelo. Tu registro queda pendiente de aprobación.</p></li><li><h3>Espera la revisión</h3><p>Un administrador revisa tu solicitud. Si la aprueba, podrás iniciar sesión. Si la rechaza, verás el motivo al intentar ingresar.</p></li><li><h3>Activa Disponible y prepara tu precio</h3><p>Revisa las solicitudes y elige una para preparar tu propuesta. Tienes <strong>1 minuto</strong> para enviarla. Otros choferes también pueden proponer sus precios para esa solicitud.</p></li><li><h3>Responde a la negociación</h3><p>Tu propuesta tiene un plazo de <strong>5 minutos</strong>. El pasajero puede aceptarla o enviar una contrapropuesta; en ese caso, puedes aceptar, rechazar o negociar. Solo puedes participar en una solicitud a la vez.</p></li><li><h3>Inicia, finaliza y registra el pago</h3><p>Cuando el viaje esté confirmado contigo, pulsa <strong>Iniciar</strong> y, al terminar, <strong>Finalizar</strong>. Luego registra Efectivo o Yape simulado. El viaje se guarda en el historial y suma al ranking de viajes finalizados.</p></li></ol>
+    </section>
+    <section class="admin-section" id="administrador" aria-labelledby="titulo-admin"><div><p class="eyebrow">03 / ADMINISTRADOR</p><h2 id="titulo-admin">Revisa antes<br>de dar acceso.</h2><p>La aprobación se aplica a los choferes. Los pasajeros acceden al registrarse.</p></div><ol class="admin-steps"><li><h3>Entra con tu cuenta administradora</h3><p>Estas cuentas se crean de forma privada; el registro público ofrece Pasajero y Chofer.</p></li><li><h3>Abre Solicitudes</h3><p>Revisa los datos del chofer y de su vehículo antes de tomar una decisión.</p></li><li><h3>Aprueba o rechaza</h3><p>Aprobar habilita el acceso del chofer. Para rechazar, escribe un motivo. Una solicitud rechazada puede aprobarse posteriormente; cada decisión queda registrada.</p></li></ol></section>
+    <section class="faq-section" id="preguntas" aria-labelledby="titulo-preguntas"><div class="faq-heading"><p class="eyebrow">ANTES DE EMPEZAR</p><h2 id="titulo-preguntas">Lo que conviene saber.</h2></div><div class="faq-list">
+      <details><summary>¿Qué pasa si nadie acepta el viaje?</summary><p>La búsqueda inicial dura 10 minutos. Una preparación o propuesta obtenida a tiempo conserva su propio plazo. Si ya no queda ninguna opción vigente, el viaje termina sin conductor y puedes solicitar otro.</p></details>
+      <details><summary>¿Puedo cancelar o informar un problema?</summary><p>Antes de iniciar el viaje, puedes cancelarlo indicando un motivo. Durante el viaje, pasajero y chofer pueden registrar una incidencia con motivo y comentario. Si un viaje confirmado no comienza en 30 minutos, se cancela automáticamente cuando el sistema procesa su vencimiento.</p></details>
+      <details><summary>¿Rechazar a un chofer cancela toda la solicitud?</summary><p>No. Rechazar una propuesta solo descarta a ese chofer en esa solicitud. Las demás propuestas mantienen sus propios plazos. Si un chofer retira su participación antes de la confirmación, tampoco cancela las de los demás.</p></details>
+      <details><summary>¿El mapa muestra la ruta y la ubicación del chofer?</summary><p>La línea discontinua une la recogida y el destino como referencia; no calcula una ruta por calles. No hay seguimiento GPS continuo ni estimaciones de llegada. El mapa y las búsquedas de lugares necesitan conexión a internet.</p></details>
+      <details><summary>¿Se cobra dinero real?</summary><p>No. Es una aplicación académica de viajes simulados. Efectivo y Yape son registros de demostración: el sistema no procesa cobros ni transferencias.</p></details>
+      <details><summary>¿Puedo tener varios viajes al mismo tiempo?</summary><p>Cada usuario puede tener un solo viaje activo. Un chofer participa en una solicitud a la vez mientras prepara su precio o espera una respuesta. Esto no impide que otros choferes propongan para la misma solicitud.</p></details>
+    </div></section>
+    <section class="closing"><div><p class="eyebrow">YA CONOCES EL RECORRIDO</p><h2>Tu próximo paso empieza aquí.</h2></div><a class="button" href="/">Abrir el sistema <span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer><a class="brand" href="/">Uber <span>Sicuani</span></a><p>Proyecto académico · Viajes y pagos simulados</p><a href="#titulo">Volver arriba ↑</a></footer>
+</body>
+</html>

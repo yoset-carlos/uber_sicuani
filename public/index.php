@@ -7,6 +7,7 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 header('X-Frame-Options: DENY');
 header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 $path=parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH) ?: '/';
+if (in_array($path,['/como-funciona','/como-funciona/'],true)) { header('Cache-Control: no-cache'); require dirname(__DIR__).'/views/guide.php'; exit; }
 if (!str_starts_with($path,'/api')) { header('Cache-Control: no-cache'); require dirname(__DIR__).'/views/app.php'; exit; }
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
