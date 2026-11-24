@@ -61,6 +61,16 @@ const state = {
   finished: 0,
   registrationMessage: "",
   suggestedUsername: "",
+  authRole: "pasajero",
+  authStep: 1,
+  pendingAccount: null,
+  selectedOffer: null,
+  counterOpen: false,
+  payMethod: "efectivo",
+  chat: { tripId: null, messages: [], open: false, outbox: [] },
+  rating: { tripId: null, stars: 0, tags: [], comment: "" },
+  ratingPrompted: new Set(),
+  mapOpen: false,
 };
 let map,
   tiles,
@@ -69,7 +79,9 @@ let map,
   pollTimer,
   noticeTimer,
   dialogAction,
-  lastPoll;
+  lastPoll,
+  chatTimer,
+  chatLoad;
 let renderedMode = "";
 let addressQueue = Promise.resolve();
 let placeSearch = null;
@@ -142,7 +154,10 @@ async function api(path, { method = "GET", body } = {}) {
       state.view = "home";
       state.practice = null;
       state.signature = "";
+      state.chat = { tripId: null, messages: [], open: false, outbox: [] };
+      clearTimeout(chatTimer);
       if ($("#action-dialog").open) closeDialog();
+      if ($("#rating-dialog").open) $("#rating-dialog").close();
       try {
         state.csrf = (await api("/sesion")).csrf;
       } catch {
@@ -190,6 +205,8 @@ function initMap() {
     if (state.selecting && state.user?.rol === "pasajero" && !state.trip) {
       setPoint(state.selecting, position.lat, position.lng);
       updateSelection();
+      // On mobile the map is a temporary full-screen picker: return to the form once the point is marked.
+      if (state.mapOpen && innerWidth <= 800) setTimeout(() => closeMap(), 450);
     }
   };
   map.on("click", (e) => choose(e.latlng));
@@ -416,7 +433,7 @@ function restoreDraft() {
 function fitVisibleRoute() {
   if (!map || map.getSize().y <= 180) return;
   if (line) map.fitBounds(line.getBounds(), {
-    paddingTopLeft: innerWidth <= 800 ? [48, 100] : [65, 65],
+    paddingTopLeft: innerWidth <= 800 ? [48, document.body.dataset.map === "open" ? 190 : 100] : [65, 65],
     paddingBottomRight: innerWidth <= 800 ? [48, 48] : [65, 65],
     maxZoom: 16,
     animate: false,
@@ -510,8 +527,48 @@ function updateSelection() {
           : "Sin marcar";
   }
 }
+const svgIcons = {
+  back: '<path d="M15 6l-6 6 6 6"/>',
+  map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/>',
+  chat: '<path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 20 12z"/>',
+  send: '<path d="M5 12h13"/><path d="m12 5 7 7-7 7"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  shield: '<path d="M12 3 5 6v6c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6l-7-3z"/><path d="m9 12 2 2 4-4"/>',
+  car: '<path d="M5 16v-5l2-5h10l2 5v5"/><path d="M3 16h18v3H3z"/><path d="M7 11h10"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
+  alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/>',
+  star: '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9L12 3.5z"/>',
+  login: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="m9 16 4-4-4-4"/><path d="M13 12H4"/>',
+  wallet: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M16 14.5h2"/>',
+  logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 16 4-4-4-4"/><path d="M19 12H9"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+};
+const svg = (name, extra = "") =>
+  `<svg class="ico ${extra}" viewBox="0 0 24 24" aria-hidden="true">${svgIcons[name]}</svg>`;
+const firstName = (name = "") => String(name).trim().split(/\s+/)[0] || "";
+const initials = (name = "") =>
+  String(name).trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
+const clock = (seconds) =>
+  new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Lima" }).format(new Date(seconds * 1000));
+const chip = (text, tone = "blue") => `<span class="chip chip-${tone}">${text}</span>`;
+const ratingLabels = ["", "Malo", "Regular", "Bueno", "Muy bueno", "Excelente"];
+const goodTags = ["Puntual", "Amable", "Auto limpio", "Buena conducción"];
+const badTags = ["Llegó tarde", "Manejo brusco", "Auto sucio", "Otro"];
+const vehicleText = (c) => [`${c.marca || ""} ${c.modelo || ""}`.trim(), c.color].filter(Boolean).join(" · ");
+const tripsText = (c) => `${c.viajes ?? 0} ${c.viajes === 1 ? "viaje" : "viajes"}`;
+const ratingText = (c) => (c.promedio ? `<span class="rating-inline">${svg("star", "filled")}${String(c.promedio).replace(".", ",")}</span>` : "");
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* Storage is optional. */ }
+}
 function heading(eyebrow, title, subtitle = "") {
   return `<div class="panel-heading"><p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}</div>`;
+}
+function titleBlock(title, subtitle = "", aside = "") {
+  return `<div class="title-block"><div class="grow"><h1>${title}</h1>${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}</div>${aside}</div>`;
 }
 function field(name, label, type = "text", attrs = "") {
   if (type === "password") {
@@ -519,21 +576,82 @@ function field(name, label, type = "text", attrs = "") {
   }
   return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" ${attrs}></div>`;
 }
+function authField(name, label, type, attrs, iconName, hint = "") {
+  const toggle = type === "password" ? `<button type="button" class="password-toggle" data-toggle-password="${name}" aria-label="Mostrar contraseña" aria-pressed="false">${icon("EyeIcon")}</button>` : "";
+  return `<div class="field auth-field"><label for="${name}">${label}</label><div class="input-icon ${toggle ? "has-toggle" : ""}">${iconName ? svg(iconName) : ""}<input id="${name}" name="${name}" type="${type}" ${attrs}${hint ? ` aria-describedby="${name}-hint"` : ""}>${toggle}</div>${hint ? `<p class="hint" id="${name}-hint">${hint}</p>` : ""}</div>`;
+}
 function route(j) {
   return `<div class="route-summary">${["origen", "destino"].map((k) => `<div class="route-stop"><span class="route-symbol ${k === "destino" ? "destination" : ""}" aria-hidden="true"></span><div><small>${k === "origen" ? "Recogida" : "Destino"}</small><p>${esc(j[k].nombre)}</p></div></div>`).join("")}</div>`;
 }
+function routeCard(j) {
+  return `<div class="route-card-stops"><p class="route-card-stop"><span class="route-symbol" aria-hidden="true"></span><span class="sr-only">Recogida: </span>${esc(j.origen.nombre)}</p><span class="route-card-divider" aria-hidden="true"></span><p class="route-card-stop"><span class="route-symbol destination" aria-hidden="true"></span><span class="sr-only">Destino: </span>${esc(j.destino.nombre)}</p></div><button type="button" class="map-toggle" id="show-map" aria-label="Ver recorrido en el mapa">${svg("map")}<span>Mapa</span></button>`;
+}
 function authView() {
-  const register = state.auth === "register";
-  return (
-    heading(
-      "Muévete por Sicuani",
-      register ? "Empieza tu próximo viaje" : "Qué bueno verte por aquí",
-      register
-        ? "Elige si quieres viajar o conducir."
-        : "Inicia sesión para viajar o conducir.",
-    ) +
-    `${state.registrationMessage ? `<div class="info-well" role="status"><p>${esc(state.registrationMessage)}</p></div>` : ""}<form id="auth-form" class="auth-form form-grid">${register ? `<div class="field"><label for="registration-role">Tipo de cuenta</label><select id="registration-role" name="rol" required><option value="pasajero">Pasajero — quiero viajar</option><option value="conductor">Chofer — quiero conducir</option></select></div>` + field("nombre", "Nombre completo", "text", 'required minlength="2" maxlength="80" autocomplete="name"') + field("telefono", "Celular", "tel", 'required inputmode="tel" placeholder="987 654 321" autocomplete="tel"') : ""}${field("usuario", "Usuario", "text", `required minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" value="${esc(state.suggestedUsername)}"`)}${field("password", "Contraseña", "password", `required ${register ? 'minlength="8" maxlength="72" ' : ""}autocomplete="${register ? "new-password" : "current-password"}"`)}${register ? `<fieldset id="vehicle-fields" class="vehicle-fields form-grid" hidden disabled><legend>Datos de tu vehículo</legend><p class="hint">Tu cuenta de chofer quedará pendiente de aprobación manual.</p>${field("placa", "Placa", "text", 'required maxlength="60" autocomplete="off"')}${field("color", "Color", "text", 'required maxlength="60" autocomplete="off"')}${field("marca", "Marca", "text", 'required maxlength="60" autocomplete="off"')}${field("modelo", "Modelo", "text", 'required maxlength="60" autocomplete="off"')}</fieldset>` : ""}<p id="form-error" class="error-text" role="alert" hidden></p><button type="submit" class="primary">${register ? "Crear cuenta" : "Iniciar sesión"}</button></form><div class="auth-switch"><p class="small">${register ? "¿Ya tienes una cuenta?" : "¿Es tu primer viaje?"}</p><button type="button" class="secondary full" id="switch-auth">${register ? "Iniciar sesión" : "Crear una cuenta"}</button></div><p class="auth-note">Viajes de práctica. Los pagos en efectivo y Yape son simulados.</p>`
-  );
+  if (state.auth === "pending") return pendingView();
+  if (state.auth === "register") return registerView();
+  return `<div class="auth-hero"><img src="/assets/login-bg.jpg" alt="Pasajera con manta andina y su celular, y chofer junto a un auto blanco en la plaza de Sicuani" width="1170" height="780"></div>
+    <div class="auth-brand"><span class="auth-logo"><img src="/assets/logo-mark.png" alt="Logo de Uber Sicuani" width="68" height="68"></span><h1>Uber Sicuani</h1><p>Tu ciudad. Tu próximo destino.</p></div>
+    <form id="auth-form" class="auth-card" novalidate>
+      <div class="auth-card-title"><h2>Iniciar sesión</h2><p>Ingresa con tu usuario para viajar o conducir</p></div>
+      ${state.registrationMessage ? `<p class="success-box" role="status">${esc(state.registrationMessage)}</p>` : ""}
+      <p id="form-error" class="alert-box" role="alert" hidden></p>
+      ${authField("usuario", "Usuario", "text", `required minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Ej. ruben.quispe" value="${esc(state.suggestedUsername)}"`, "user")}
+      ${authField("password", "Contraseña", "password", 'required autocomplete="current-password" placeholder="Tu contraseña"', "lock")}
+      <button type="submit" class="primary">${svg("login")}<span>Entrar</span></button>
+      <p class="secure-note">${svg("shield")}Contraseña protegida con cifrado</p>
+    </form>
+    <p class="auth-foot">¿Es tu primera vez? <button type="button" class="link-button" id="switch-auth">Crear una cuenta</button></p>
+    <p class="auth-note">Viajes de práctica. Los pagos en efectivo y Yape son simulados.</p>`;
+}
+function registerView() {
+  const driver = state.authRole === "conductor";
+  const vehicle = driver && state.authStep === 2;
+  const roleButton = (role, title, text, iconName) =>
+    `<button type="button" role="radio" class="segment" data-role="${role}" aria-checked="${state.authRole === role}">${svg(iconName)}<span><span>${title}</span><small>${text}</small></span></button>`;
+  return `<button type="button" class="round-button on-dark auth-back" id="switch-auth" aria-label="Volver a iniciar sesión">${svg("back")}</button>
+    <div class="auth-brand compact"><span class="auth-logo"><img src="/assets/logo-mark.png" alt="Logo de Uber Sicuani" width="46" height="46"></span><h1>Crea tu cuenta</h1><p>Elige cómo usarás Uber Sicuani</p></div>
+    <form id="auth-form" class="auth-card">
+      <div role="radiogroup" aria-label="Tipo de cuenta" class="segments">${roleButton("pasajero", "Pasajero", "Quiero viajar", "user")}${roleButton("conductor", "Chofer", "Quiero conducir", "car")}</div>
+      <input type="hidden" name="rol" value="${driver ? "conductor" : "pasajero"}">
+      ${driver ? `<div class="progress" aria-label="Progreso del registro"><div class="progress-bars"><span class="on"></span><span class="${vehicle ? "on" : ""}"></span></div><p>${vehicle ? "Paso 2 de 2 · Tu vehículo" : "Paso 1 de 2 · Tus datos"}</p></div>` : ""}
+      <div class="form-grid" id="personal-fields" ${vehicle ? "hidden" : ""}>
+        ${authField("nombre", "Nombre completo", "text", 'required minlength="2" maxlength="80" autocomplete="name" placeholder="Ej. Rubén Quispe"', "user")}
+        <div class="field auth-field"><label for="telefono">Celular</label><div class="phone-row"><span class="phone-prefix" aria-hidden="true">+51</span><input id="telefono" name="telefono" type="tel" required inputmode="tel" pattern="[0-9 ]{9,11}" autocomplete="tel-national" placeholder="987 654 321"></div></div>
+        ${authField("usuario", "Usuario", "text", 'required minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="De 3 a 32 caracteres"', "user")}
+        ${authField("password", "Contraseña", "password", 'required minlength="8" maxlength="72" autocomplete="new-password" placeholder="Mínimo 8 caracteres"', "lock", "Usa de 8 a 72 caracteres.")}
+      </div>
+      <fieldset class="form-grid vehicle-fields" id="vehicle-fields" ${vehicle ? "" : "hidden disabled"}>
+        <legend class="sr-only">Datos de tu vehículo</legend>
+        ${authField("placa", "Placa", "text", 'required maxlength="60" autocomplete="off" placeholder="Ej. X3F-482" class="plate-input"', "")}
+        <div class="two-cols">${authField("marca", "Marca", "text", 'required maxlength="60" autocomplete="off" placeholder="Toyota"', "")}${authField("modelo", "Modelo", "text", 'required maxlength="60" autocomplete="off" placeholder="Yaris"', "")}</div>
+        ${authField("color", "Color", "text", 'required maxlength="60" autocomplete="off" placeholder="Blanco"', "")}
+        <p class="info-box">${svg("clock")}Tu cuenta quedará en revisión. Podrás conducir cuando el administrador la apruebe.</p>
+      </fieldset>
+      <p id="form-error" class="alert-box" role="alert" hidden></p>
+      ${vehicle ? `<div class="button-row"><button type="button" class="secondary" id="auth-step-back">Atrás</button><button type="submit" class="primary">Enviar solicitud</button></div>` : `<button type="submit" class="primary">${driver ? "Continuar" : "Crear cuenta"}</button>`}
+      <p class="secure-note">${svg("shield")}Contraseña protegida con cifrado</p>
+    </form>
+    <p class="auth-foot">¿Ya tienes una cuenta? <button type="button" class="link-button" id="switch-auth-foot">Inicia sesión</button></p>`;
+}
+function pendingView() {
+  const p = state.pendingAccount || { estado: "pendiente" };
+  const rejected = p.estado === "rechazado";
+  const name = firstName(p.nombre);
+  return `<div class="auth-brand compact"><span class="auth-logo"><img src="/assets/logo-mark.png" alt="Logo de Uber Sicuani" width="46" height="46"></span><p class="auth-brand-name">Uber Sicuani</p></div>
+    <div class="auth-card">
+      ${rejected
+        ? `<span class="status-icon bad">${svg("alert")}</span><h1 class="auth-title">Tu solicitud de chofer fue rechazada</h1><div class="alert-box"><p><strong>Motivo:</strong> ${esc(p.motivo || "Sin detalle.")}</p></div><p class="muted">Habla con el administrador. Puede aprobarla después de revisarla otra vez.</p>`
+        : `<span class="status-icon">${svg("clock")}</span><h1 class="auth-title">Tu cuenta de chofer está en revisión</h1><p class="muted">${name ? `Hola, ${esc(name)}. ` : ""}Ya recibimos tus datos.</p>
+          <ol class="steps" aria-label="Estado de tu solicitud"><li class="done">${svg("check")}<span>Enviada</span></li><li class="current" aria-current="step"><span class="step-dot"></span><span>En revisión</span></li><li><span class="step-dot"></span><span>Aprobada</span></li></ol>
+          <p class="muted small">Podrás conducir cuando el administrador apruebe tu cuenta. Vuelve a revisar más tarde.</p>`}
+      <form id="status-form" class="form-grid" novalidate>
+        <p id="form-error" class="alert-box" role="alert" hidden></p>
+        ${authField("usuario", "Usuario", "text", `required autocomplete="username" autocapitalize="none" spellcheck="false" value="${esc(p.usuario || state.suggestedUsername)}"`, "user")}
+        ${authField("password", "Contraseña", "password", 'required autocomplete="current-password"', "lock")}
+        <button type="submit" class="primary">Revisar estado</button>
+      </form>
+      <button type="button" class="text-button" id="use-other-account">Usar otra cuenta</button>
+    </div>`;
 }
 function newTripView() {
   return (
@@ -578,25 +696,218 @@ function driverHome() {
     </section>`
   );
 }
+function searchingWell() {
+  return `<div class="info-well"><div class="radar-wrap" aria-hidden="true"><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-center-dot">${icon("TruckIcon")}</div></div><h3>Buscando conductores</h3><p>Varios choferes pueden enviar su precio. Las propuestas aparecerán aquí automáticamente.</p></div>`;
+}
+function offerCard(offer, { best = false, featured = false, selected = false } = {}) {
+  const c = offer.conductor_info;
+  const own = offer.autor === state.user.id;
+  const id = esc(offer.id);
+  const body = `<img class="offer-car" src="/assets/car-offer.png" alt="" width="${featured ? 84 : 72}" height="${featured ? 42 : 36}">
+    <span class="offer-main"><span class="offer-name">${esc(c.nombre)}</span><span class="offer-vehicle">${esc(vehicleText(c))}${featured ? "" : ` · ${esc(c.placa)}`}</span>
+      ${featured ? `<span class="offer-tags"><span class="plate small-plate">${esc(c.placa)}</span>${best ? chip("Mejor precio", "green") : ""}${own ? chip("Tu contraoferta", "purple") : ""}</span>` : own ? `<span class="offer-tags">${chip("Tu contraoferta", "purple")}</span>` : ""}</span>
+    <span class="offer-side"><span class="offer-price">${money(offer.importe)}</span>${featured ? `<span class="offer-meta">${tripsText(c)}${ratingText(c)}</span>` : ""}<span class="offer-meta">Vence <span class="countdown" data-deadline="${offer.vence}"></span></span></span>`;
+  if (own)
+    return `<div class="offer ${featured ? "featured" : ""} own" aria-label="Tu contraoferta a ${esc(c.nombre)}, esperando su respuesta">${body}</div>`;
+  return `<button type="button" class="offer ${featured ? "featured" : ""}" data-select-offer="${id}" aria-pressed="${selected}" aria-label="${esc(c.nombre)}, ${esc(vehicleText(c))}, ${money(offer.importe)}">${body}</button>`;
+}
 function passengerOffers(j) {
   const offers = j.ofertas || [];
-  return `<section class="requests-section" aria-labelledby="offers-heading"><div class="requests-heading"><h2 id="offers-heading">Propuestas de choferes</h2><p class="small muted">${offers.length} ${offers.length === 1 ? "propuesta" : "propuestas"}</p></div>
-    ${offers.length ? `<p class="hint">Compara los precios y elige con quién viajar. Al aceptar, se confirma un solo chofer.</p><div class="requests-list">${offers.map((offer) => {
-      const c = offer.conductor_info;
-      const own = offer.autor === state.user.id;
-      const offerId = esc(offer.id);
-      return `<article class="request-card offer-card" aria-labelledby="offer-${offerId}-driver">
-        <div class="offer-heading"><img class="offer-car" src="/assets/car-white.png" alt="" width="72" height="48"><div><h3 id="offer-${offerId}-driver">${esc(c.nombre)}</h3><p class="small muted">${esc(c.marca)} ${esc(c.modelo)} · ${esc(c.color)}</p></div><strong class="offer-price">${money(offer.importe)}</strong></div>
-        <span class="plate">${esc(c.placa)}</span>
-        <p class="small muted">${own ? "Tu contraoferta" : "Precio del chofer"} · Vence en <span class="countdown" data-deadline="${offer.vence}"></span></p>
-        ${own ? '<p class="hint" role="status">Esperando la respuesta de este chofer. Puedes elegir otra propuesta.</p>' : `<div class="stack tight offer-actions"><button type="button" class="primary" data-action="aceptar-oferta" data-id="${j.id}" data-offer-id="${offerId}" data-change>Aceptar por ${money(offer.importe)}</button>
-        <details class="offer-negotiate"><summary>Proponer otro precio</summary><form class="form-grid offer-counteroffer" data-offer-id="${offerId}"><div class="field"><label for="offer-${offerId}-amount">Tu precio en soles</label><input id="offer-${offerId}-amount" name="importe" type="number" required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"></div><div class="quick-chips" aria-label="Ajuste rápido de precio"><button type="button" class="chip-btn" data-quick-delta="-1" data-base-price="${offer.importe}" data-target-input="offer-${offerId}-amount">- S/ 1.00</button><button type="button" class="chip-btn" data-quick-delta="1" data-base-price="${offer.importe}" data-target-input="offer-${offerId}-amount">+ S/ 1.00</button><button type="button" class="chip-btn" data-quick-delta="2" data-base-price="${offer.importe}" data-target-input="offer-${offerId}-amount">+ S/ 2.00</button></div><p class="error-text" role="alert" hidden></p><button type="submit" class="secondary" data-change>Enviar contraoferta</button></form></details>
-        <button type="button" class="text-button" data-action="rechazar-oferta" data-id="${j.id}" data-offer-id="${offerId}" data-change>Rechazar esta propuesta</button></div>`}
-      </article>`;
-    }).join("")}</div>` : `<div class="info-well"><div class="radar-wrap" aria-hidden="true"><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-ring"></div><div class="radar-center-dot">${icon("TruckIcon")}</div></div><h3>Buscando conductores</h3><p>Varios choferes pueden enviar su precio. Las propuestas aparecerán aquí automáticamente.</p></div>`}
-  </section>`;
+  const count = `${offers.length} ${offers.length === 1 ? "propuesta" : "propuestas"}`;
+  const live = chip("En vivo", "blue");
+  if (!offers.length)
+    return titleBlock("Buscando conductores", `La búsqueda vence en <strong class="countdown" data-deadline="${j.busqueda_hasta}"></strong>`, live) + searchingWell();
+  const sorted = [...offers].sort((a, b) => a.importe - b.importe || Number(a.id) - Number(b.id));
+  const choosable = sorted.filter((o) => o.autor !== state.user.id);
+  const best = choosable[0] || sorted[0];
+  const selected = choosable.find((o) => o.id === state.selectedOffer) || choosable[0] || null;
+  const others = sorted.filter((o) => o !== best);
+  const name = selected ? firstName(selected.conductor_info.nombre) : "";
+  let html = titleBlock("Elige tu chofer", `${count} · La búsqueda vence en <strong class="countdown" data-deadline="${j.busqueda_hasta}"></strong>`, live);
+  html += `<section class="offer-group" aria-labelledby="best-heading"><h2 class="section-label" id="best-heading">Recomendada</h2>${offerCard(best, { best: choosable.length > 1 && best === choosable[0], featured: true, selected: best === selected })}</section>`;
+  if (others.length)
+    html += `<section class="offer-group" aria-labelledby="others-heading"><h2 class="section-label" id="others-heading">Otras propuestas</h2>${others.map((o) => offerCard(o, { selected: o === selected })).join("")}</section>`;
+  if (!selected)
+    return html + `<p class="hint" role="status">Esperando la respuesta del chofer a tu contraoferta. Las nuevas propuestas aparecerán aquí.</p>`;
+  const sid = esc(selected.id);
+  html += `<div class="counter-panel" id="counter-panel" ${state.counterOpen ? "" : "hidden"}>
+      <form class="form-grid offer-counteroffer" data-offer-id="${sid}"><div class="field"><label for="offer-${sid}-amount">Tu precio para ${esc(name)} en soles</label><input id="offer-${sid}-amount" name="importe" type="number" required min="1" max="1000" step="0.01" placeholder="S/ 0.00" inputmode="decimal"></div>
+      <div class="quick-chips" aria-label="Ajuste rápido de precio">${[[-1, "- S/ 1.00"], [1, "+ S/ 1.00"], [2, "+ S/ 2.00"]].map(([d, l]) => `<button type="button" class="chip-btn" data-quick-delta="${d}" data-base-price="${selected.importe}" data-target-input="offer-${sid}-amount">${l}</button>`).join("")}</div>
+      <p class="error-text" role="alert" hidden></p><button type="submit" class="secondary" data-change>Enviar contraoferta</button></form>
+      <button type="button" class="text-button" data-action="rechazar-oferta" data-id="${j.id}" data-offer-id="${sid}" data-change>Rechazar la propuesta de ${esc(name)}</button>
+    </div>
+    <div class="dock"><button type="button" class="primary grow" data-action="aceptar-oferta" data-id="${j.id}" data-offer-id="${sid}" data-change>Aceptar a ${esc(name)} · ${money(selected.importe)}</button><button type="button" class="secondary dock-side" id="toggle-counter" aria-expanded="${state.counterOpen}" aria-controls="counter-panel">Contraoferta</button></div>`;
+  return html;
+}
+function cmpStreamId(a = "0-0", b = "0-0") {
+  const [am, as] = a.split("-").map(Number);
+  const [bm, bs] = b.split("-").map(Number);
+  return am - bm || as - bs;
+}
+const seenKey = (tripId) => `sicuani:chat-visto:${state.user?.id}:${tripId}`;
+function unread(j) {
+  if (state.chat.tripId !== j.id) return 0;
+  const seen = storageGet(seenKey(j.id)) || "0-0";
+  return state.chat.messages.filter((m) => m.autor !== state.user.id && cmpStreamId(m.id, seen) > 0).length;
+}
+function otherParty(j) {
+  const driver = state.user.rol === "conductor";
+  return driver ? { ...j.pasajero_info, rol: "pasajero" } : { ...j.conductor_info, rol: "conductor" };
+}
+function personCard(j, { car = false } = {}) {
+  const o = otherParty(j);
+  const driver = o.rol === "conductor";
+  return `<div class="person-card">${car && driver ? `<img class="person-car" src="/assets/car-offer.png" alt="" width="96" height="48">` : `<span class="avatar" aria-hidden="true">${esc(initials(o.nombre))}</span>`}<div class="grow"><p class="person-name">${esc(o.nombre)}</p><p class="small">${driver ? esc(vehicleText(o)) : "Pasajero"}</p>${driver ? `<p class="small person-meta">${tripsText(o)}${ratingText(o)}</p>` : ""}</div>${driver ? `<span class="plate">${esc(o.placa)}</span>` : ""}</div>`;
+}
+function amountRow(label, amount, detail) {
+  return `<div class="amount-row"><div class="grow"><p class="small">${label}</p><p class="small muted">${detail}</p></div><strong class="price">${money(amount)}</strong></div>`;
+}
+function chatPreview(j) {
+  const o = otherParty(j);
+  const name = esc(firstName(o.nombre));
+  const theirs = state.chat.tripId === j.id ? state.chat.messages.filter((m) => m.autor !== state.user.id) : [];
+  const last = theirs[theirs.length - 1];
+  const count = unread(j);
+  return `<button type="button" class="chat-preview" data-open-chat>${svg("chat")}<span class="grow"><span class="chat-preview-title">${last ? `Mensaje de ${name}` : `Chat con ${name}`}</span><span class="chat-preview-text">${last ? esc(last.texto) : "Aún no hay mensajes. Escríbele para coordinar la recogida."}</span></span>${count ? `<span class="badge" aria-label="${count} sin leer">${count}</span>` : ""}</button>`;
+}
+function incidentList(j) {
+  return j.incidencias?.length
+    ? `<div class="stack tight"><h3>Incidencias registradas</h3>${j.incidencias.map((i) => `<div class="info-well"><p><strong>${esc(reasons[i.motivo])}</strong></p><p>${esc(i.comentario)}</p><p>${date(i.fecha)}</p></div>`).join("")}</div>`
+    : "";
+}
+function availabilityToggle() {
+  return `<div class="availability"><label for="available"><input id="available" name="disponible" type="checkbox" ${state.user.disponible === "1" ? "checked" : ""}>Disponible para próximos viajes</label></div>`;
+}
+function confirmedView(j, driver) {
+  const o = otherParty(j);
+  const name = esc(firstName(o.nombre));
+  let html = `<div class="row between">${chip("Confirmado", "green")}<span class="small muted">Inicio antes de <span class="countdown" data-deadline="${j.inicio_hasta}"></span></span></div>`;
+  html += titleBlock(driver ? `Recoge a ${name}` : `${name} va a recogerte`, driver ? `Ve a ${esc(j.origen.nombre)}. Avísale por chat cuando llegues.` : `Espéralo en ${esc(j.origen.nombre)}. Revisa la placa antes de subir.`);
+  html += personCard(j, { car: true });
+  html += amountRow("Precio acordado", j.precio, driver ? "Cobras al finalizar · Efectivo o Yape" : "Pagas al finalizar · Efectivo o Yape");
+  html += chatPreview(j);
+  html += driver
+    ? `<button type="button" class="primary" data-action="iniciar" data-id="${j.id}" data-change>Iniciar viaje</button><button type="button" class="secondary" data-open-chat>Escribir a ${name}</button>`
+    : `<button type="button" class="primary" data-open-chat>${svg("chat")}<span>Escribir a ${name}</span></button>`;
+  html += `<button type="button" class="text-button danger-text" data-dialog="cancelar" data-id="${j.id}" data-change>Cancelar viaje</button>`;
+  if (driver) html += availabilityToggle();
+  return html;
+}
+function rideView(j, driver) {
+  const o = otherParty(j);
+  const name = esc(firstName(o.nombre));
+  const steps = ["Confirmado", "Recogido", "En curso", "Pago"];
+  let html = `<div class="row between">${chip("En curso", "blue")}</div>`;
+  html += titleBlock(driver ? `Lleva a ${name} a ${esc(j.destino.nombre)}` : `Vas camino a ${esc(j.destino.nombre)}`, driver ? `Iniciaste el viaje a las ${clock(j.iniciado)}.` : `${name} te recogió e inició el viaje a las ${clock(j.iniciado)}.`);
+  html += `<ol class="steps" aria-label="Progreso del viaje">${steps.map((s, i) => (i < 2 ? `<li class="done">${svg("check")}<span>${s}</span></li>` : i === 2 ? `<li class="current" aria-current="step"><span class="step-dot"></span><span>${s}</span></li>` : `<li><span class="step-dot"></span><span>${s}</span></li>`)).join("")}</ol>`;
+  html += personCard(j);
+  html += amountRow(driver ? "Cobrarás al llegar" : "Pagarás al llegar", j.precio, "Efectivo o Yape · Pago simulado");
+  if (!driver) html += `<p class="hint">Si algo no está bien durante el trayecto, repórtalo. El chofer finaliza el viaje al llegar.</p>`;
+  const count = unread(j);
+  html += `<button type="button" class="secondary" data-open-chat>${svg("chat")}<span>Escribir a ${name}</span>${count ? `<span class="badge" aria-label="${count} sin leer">${count}</span>` : ""}</button>`;
+  if (driver) html += `<button type="button" class="primary" data-action="finalizar" data-id="${j.id}" data-change>Finalizar viaje</button>`;
+  html += `<button type="button" class="text-button danger-text" data-dialog="incidencia" data-id="${j.id}" data-change>Reportar incidencia</button>`;
+  html += incidentList(j);
+  if (driver) html += availabilityToggle();
+  return html;
+}
+const methodName = (m) => (m === "yape" ? "Yape" : "Efectivo");
+function arrivalView(j, driver) {
+  const o = otherParty(j);
+  const name = esc(firstName(o.nombre));
+  const paid = j.pago !== "pendiente";
+  const c = j.conductor_info || {};
+  let html = `<div class="row between">${paid ? chip("Finalizado", "green") : chip("Finalizado · pago pendiente", "yellow")}</div>`;
+  html += titleBlock(driver ? "Viaje finalizado" : `Llegaste a ${esc(j.destino.nombre)}`, paid ? (driver ? `Registraste el pago de ${name}.` : "Gracias por viajar con Uber Sicuani.") : driver ? `Cobra a ${name} y registra cómo te pagó.` : `Paga a ${name} en efectivo o por Yape. ${name} registrará el pago al recibirlo.`);
+  html += `<div class="total-card"><p class="small">${paid ? "Total pagado" : "Total a pagar"}</p><strong class="price big">${money(j.precio)}</strong><p class="small muted">${paid ? `${methodName(j.pago)} · Pago simulado` : "Efectivo o Yape · Pago simulado"}</p></div>`;
+  if (driver && !paid) {
+    const chosen = state.payMethod || "efectivo";
+    html += `<form id="pay-form" class="stack tight"><fieldset class="method-list"><legend class="section-label">¿Cómo te pagó?</legend>${[["efectivo", "Efectivo recibido", "Te pagó directamente"], ["yape", "Yape recibido", "Te yapeó a tu número"]].map(([v, t, d]) => `<label class="method"><input type="radio" name="metodo" value="${v}" ${chosen === v ? "checked" : ""}><span class="method-radio" aria-hidden="true"></span><span class="grow"><span class="method-title">${t}</span><span class="method-detail">${d}</span></span>${svg("wallet")}</label>`).join("")}</fieldset><button type="submit" class="primary" data-change><span>Registrar pago con <span id="pay-method-name">${methodName(chosen)}</span></span></button><p class="hint">Puedes dejarlo pendiente y registrarlo luego desde Actividad.</p></form>`;
+  }
+  if (paid)
+    html += `<div class="success-box" role="status">${svg("check")}<div><strong>Pago registrado</strong><p class="small">${money(j.precio)} con ${methodName(j.pago)} · Viaje con ${esc(o.nombre)}</p></div></div>`;
+  html += `<dl class="summary"><div><dt>Desde</dt><dd>${esc(j.origen.nombre)}</dd></div><div><dt>Hasta</dt><dd>${esc(j.destino.nombre)}</dd></div>${c.marca ? `<div><dt>Vehículo</dt><dd>${esc(`${c.marca} ${c.modelo}`)} · ${esc(c.placa)}</dd></div>` : ""}</dl>`;
+  if (j.calificacion)
+    html += `<div class="thanks">${svg("star", "filled")}<p>${driver ? `${name} te calificó con ${j.calificacion.estrellas} de 5` : `Gracias por calificar a ${name} con ${j.calificacion.estrellas} de 5`}</p></div>`;
+  else if (!driver) html += `<button type="button" class="secondary" data-rate="${j.id}">${svg("star")}<span>Calificar a ${name}</span></button>`;
+  html += `<p class="hint">El viaje quedó guardado en Actividad. El chat ${driver ? "con el pasajero" : "con el chofer"} se cerró.</p>`;
+  html += incidentList(j);
+  html += `<button type="button" class="${driver || paid ? "primary" : "secondary"}" id="new-trip">${driver ? "Ver solicitudes" : "Pedir otro viaje"}</button>`;
+  return html;
+}
+function chatView() {
+  const j = state.trip;
+  if (!j || !["confirmado", "en_curso", "finalizado"].includes(j.estado))
+    return `<div class="empty-state"><h3>El chat no está disponible</h3><p class="muted">Solo puedes escribir durante un viaje confirmado.</p><button type="button" class="secondary" data-view="home">Volver al viaje</button></div>`;
+  const o = otherParty(j);
+  const name = esc(firstName(o.nombre));
+  const isOpen = state.chat.open && ["confirmado", "en_curso"].includes(j.estado);
+  const mine = (m) => m.autor === state.user.id;
+  const bubbles = state.chat.messages.map((m) => mine(m)
+    ? `<div class="bubble-row mine"><p class="bubble">${esc(m.texto)}</p><span class="bubble-meta">${clock(m.fecha)} · Enviado</span></div>`
+    : `<div class="bubble-row"><p class="bubble">${esc(m.texto)}</p><span class="bubble-meta">${name} · ${clock(m.fecha)}</span></div>`).join("");
+  const outbox = state.chat.outbox.map((m) => `<div class="bubble-row mine ${m.estado === "error" ? "failed" : ""}"><p class="bubble">${esc(m.texto)}</p><span class="bubble-meta">${m.estado === "error" ? `No se envió · <button type="button" class="link-button" data-chat-retry="${m.local}">Reintentar</button>` : "Enviando…"}</span></div>`).join("");
+  const quick = state.user.rol === "conductor" ? ["Ya llegué", "Llego en 2 minutos", "¿Dónde estás?"] : ["Ya estoy aquí", "Llego en 2 minutos", "¿Dónde estás?"];
+  return `<div class="chat">
+    <header class="chat-header"><button type="button" class="round-button" data-view="home" aria-label="Volver al viaje">${svg("back")}</button><span class="avatar" aria-hidden="true">${esc(initials(o.nombre))}</span><div class="grow"><h1 class="chat-title">${esc(o.nombre)}</h1><p class="small">${o.rol === "conductor" ? `${esc(vehicleText(o))} · ${esc(o.placa)}` : "Pasajero"}</p></div>${isOpen ? chip(j.estado === "en_curso" ? "En curso" : "Confirmado", j.estado === "en_curso" ? "blue" : "green") : chip("Cerrado", "neutral")}</header>
+    <div class="chat-log" role="log" aria-label="Mensajes del viaje" aria-live="polite"><p class="chat-banner">${j.estado === "en_curso" ? "Viaje en curso" : j.estado === "finalizado" ? "Viaje finalizado" : "Viaje confirmado"} · ${money(j.precio)} · El chat se cierra al finalizar el viaje</p>${bubbles}${outbox}${!bubbles && !outbox ? `<p class="chat-empty">Escribe a ${name} para coordinar la recogida.</p>` : ""}</div>
+    ${isOpen ? `<div class="chat-composer"><div class="quick-replies" aria-label="Respuestas rápidas">${quick.map((q) => `<button type="button" class="quick-reply" data-quick-reply="${esc(q)}">${esc(q)}</button>`).join("")}</div><form id="chat-form" class="chat-form"><label for="chat-input" class="sr-only">Escribe un mensaje a ${name}</label><input id="chat-input" name="texto" type="text" maxlength="500" placeholder="Escribe un mensaje…" autocomplete="off" required><button type="submit" class="send-button" aria-label="Enviar mensaje">${svg("send")}</button></form></div>` : `<p class="chat-closed" role="status">El chat se cerró porque el viaje terminó.</p>`}
+  </div>`;
+}
+function ratingContent() {
+  const r = state.rating;
+  const j = state.trip;
+  const c = j?.conductor_info || {};
+  const tags = r.stars >= 4 ? goodTags : badTags;
+  return `<div class="rating-head"><span class="avatar large" aria-hidden="true">${esc(initials(c.nombre))}</span><p class="person-name">${esc(c.nombre)}</p><p class="small muted">${esc(`${c.marca || ""} ${c.modelo || ""}`)} · ${esc(c.placa)} · ${money(j?.precio)}</p></div>
+    <h2 id="rating-title">¿Cómo fue el viaje?</h2>
+    <fieldset class="stars"><legend class="sr-only">Calificación de 1 a 5 estrellas</legend>${[1, 2, 3, 4, 5].map((n) => `<label class="star ${n <= r.stars ? "on" : ""}"><input type="radio" name="estrellas" value="${n}" ${n === r.stars ? "checked" : ""} required><span class="sr-only">${n} de 5, ${ratingLabels[n]}</span>${svg("star")}</label>`).join("")}</fieldset>
+    <p class="rating-label" aria-live="polite">${r.stars ? ratingLabels[r.stars] : "Toca una estrella"}</p>
+    ${r.stars ? `<fieldset class="tag-list"><legend class="section-label">${r.stars >= 4 ? "¿Qué te gustó?" : "¿Qué podemos mejorar?"}</legend>${tags.map((t) => `<label class="tag"><input type="checkbox" name="etiquetas" value="${esc(t)}" ${r.tags.includes(t) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</fieldset>
+    <div class="field"><label for="rating-comment">Comentario (opcional)</label><textarea id="rating-comment" name="comentario" maxlength="500" rows="2">${esc(r.comment)}</textarea></div>` : ""}
+    <p class="error-text" id="rating-error" role="alert" hidden></p>
+    <button type="submit" class="primary" ${r.stars ? "" : "disabled"}>Enviar calificación</button>
+    <button type="button" class="text-button" id="rating-skip">Ahora no</button>`;
+}
+function openRating(j) {
+  state.rating = { tripId: j.id, stars: 0, tags: [], comment: "" };
+  $("#rating-content").innerHTML = ratingContent();
+  if (!$("#rating-dialog").open) $("#rating-dialog").showModal();
+}
+function paymentView(j, driver) {
+  return `<div class="payment-row">${icon("BanknotesIcon")}<div class="grow"><strong>${j.pago === "pendiente" ? "Pago pendiente" : `${j.pago === "yape" ? "Yape" : "Efectivo"} recibido`}</strong><p class="small muted">${money(j.precio)} · Simulación</p></div></div>${driver && j.pago === "pendiente" ? `<div class="row"><button type="button" class="secondary grow" data-pay="efectivo" data-id="${j.id}" data-change>Efectivo recibido</button><button type="button" class="secondary grow" data-pay="yape" data-id="${j.id}" data-change>Yape recibido</button></div><p class="hint">Registra el método al simular la recepción. Puedes dejarlo pendiente y actualizarlo desde Actividad.</p>` : ""}`;
+}
+function historyView() {
+  return (
+    titleBlock("Actividad", "Cada recorrido, en un solo lugar.") +
+    (state.user.rol === "conductor"
+      ? `<p class="small muted number">${state.finished} ${state.finished === 1 ? "viaje finalizado" : "viajes finalizados"}</p>`
+      : "") +
+    (!state.history.length
+      ? `<div class="empty-state"><h3>Aún no tienes viajes</h3><p class="muted">Tu actividad aparecerá aquí cuando solicites o confirmes un viaje.</p><button type="button" class="secondary" data-view="home">${state.user.rol === "conductor" ? "Ver solicitudes" : "Solicitar un viaje"}</button></div>`
+      : `<div>${state.history.map((j) => `<article class="history-item"><div class="row between"><p class="history-date">${date(j.creado)}</p><strong>${j.precio ? money(j.precio) : "Sin tarifa"}</strong></div>${route(j)}<p class="small muted">${esc(labels[j.estado])}${j.conductor_info ? ` · ${esc(j.conductor_info.nombre)}` : ""}${j.calificacion ? ` · <span class="rating-inline">${svg("star", "filled")}${j.calificacion.estrellas} de 5</span>` : ""}</p>${j.estado === "finalizado" ? paymentView(j, state.user.rol === "conductor") : ""}</article>`).join("")}</div>`)
+  );
+}
+function accountView() {
+  const u = state.user;
+  const role = u.rol === "administrador" ? "Administrador" : u.rol === "conductor" ? "Chofer" : "Pasajero";
+  return titleBlock("Cuenta", "Tus datos en Uber Sicuani.") +
+    `<div class="person-card"><span class="avatar large" aria-hidden="true">${esc(initials(u.nombre))}</span><div class="grow"><p class="person-name">${esc(u.nombre)}</p><p class="small">@${esc(u.usuario)}</p></div>${chip(role, "purple")}</div>
+    ${u.rol === "conductor" ? `<dl class="summary"><div><dt>Vehículo</dt><dd>${esc(vehicleText(u))}</dd></div><div><dt>Placa</dt><dd>${esc(u.placa)}</dd></div><div><dt>Estado</dt><dd>${u.disponible === "1" ? "Disponible" : "No disponible"}</dd></div></dl>` : ""}
+    ${u.practica === "1" ? `<button type="button" class="secondary" data-view="practice">Laboratorio Redis</button>` : ""}
+    <button type="button" class="secondary" id="logout">${svg("logout")}<span>Cerrar sesión</span></button>
+    <p class="auth-note">Proyecto académico · Sin cobros reales. Los pagos en efectivo y Yape son simulados.</p>`;
 }
 function tripView(j) {
+  const driver = state.user.rol === "conductor";
+  if (j.estado === "pendiente" && j.version === 2 && !driver)
+    return passengerOffers(j) + `<button type="button" class="text-button danger-text" data-dialog="cancelar" data-id="${j.id}" data-change>Cancelar solicitud</button>`;
+  if (j.estado === "confirmado") return confirmedView(j, driver);
+  if (j.estado === "en_curso") return rideView(j, driver);
+  if (j.estado === "finalizado") return arrivalView(j, driver);
+  return legacyTripView(j);
+}
+function legacyTripView(j) {
   const driver = state.user.rol === "conductor";
   if (j.estado === "no_elegido") {
     const message = {
@@ -670,20 +981,6 @@ function tripView(j) {
   if (driver && !terminal(j))
     html += `<div class="availability"><label for="available"><input id="available" name="disponible" type="checkbox" ${state.user.disponible === "1" ? "checked" : ""}>Disponible para próximos viajes</label></div>`;
   return html;
-}
-function paymentView(j, driver) {
-  return `<div class="payment-row">${icon("BanknotesIcon")}<div class="grow"><strong>${j.pago === "pendiente" ? "Pago pendiente" : `${j.pago === "yape" ? "Yape" : "Efectivo"} recibido`}</strong><p class="small muted">${money(j.precio)} · Simulación</p></div></div>${driver && j.pago === "pendiente" ? `<div class="row"><button type="button" class="secondary grow" data-pay="efectivo" data-id="${j.id}" data-change>Efectivo recibido</button><button type="button" class="secondary grow" data-pay="yape" data-id="${j.id}" data-change>Yape recibido</button></div><p class="hint">Registra el método al simular la recepción. Puedes dejarlo pendiente y actualizarlo desde Actividad.</p>` : ""}`;
-}
-function historyView() {
-  return (
-    heading("Tus viajes", "Actividad", "Cada recorrido, en un solo lugar.") +
-    (state.user.rol === "conductor"
-      ? `<p class="small muted number">${state.finished} ${state.finished === 1 ? "viaje finalizado" : "viajes finalizados"}</p>`
-      : "") +
-    (!state.history.length
-      ? `<div class="empty-state"><h3>Aún no tienes viajes</h3><p class="muted">Tu actividad aparecerá aquí cuando solicites o confirmes un viaje.</p><button type="button" class="secondary" data-view="home">${state.user.rol === "conductor" ? "Ver solicitudes" : "Solicitar un viaje"}</button></div>`
-      : `<div>${state.history.map((j) => `<article class="history-item"><div class="row between"><p class="history-date">${date(j.creado)}</p><strong>${j.precio ? money(j.precio) : "Sin tarifa"}</strong></div>${route(j)}<p class="small muted">${esc(labels[j.estado])}${j.conductor_info ? ` · ${esc(j.conductor_info.nombre)}` : ""}</p>${j.estado === "finalizado" ? paymentView(j, state.user.rol === "conductor") : ""}</article>`).join("")}</div>`)
-  );
 }
 function practiceView() {
   return (
@@ -767,47 +1064,71 @@ function render(force = false) {
     state.reviews,
     state.history,
     state.practice,
+    state.trip?.calificacion?.estrellas,
+    state.trip?.ofertas?.map((offer) => [offer.conductor_info?.viajes, offer.conductor_info?.promedio]),
+    state.selectedOffer,
+    state.counterOpen,
+    state.authRole,
+    state.authStep,
+    state.pendingAccount,
+    state.chat.tripId,
+    state.chat.open,
+    state.chat.messages.map((m) => m.id),
+    state.chat.outbox.map((m) => [m.local, m.estado]),
   ]);
   if (!force && signature === state.signature) return;
   const mode = currentScreen();
   const draft = mode === renderedMode ? capturePanelState() : null;
+  const chatLogAtBottom = (() => {
+    const log = $(".chat-log");
+    return !log || log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  })();
   state.signature = signature;
   closePlaceSearch();
   const logged = !!state.user;
+  const admin = state.user?.rol === "administrador";
+  document.body.dataset.screen = logged ? "app" : "auth";
+  document.body.dataset.view = logged ? (admin ? "admin" : state.view) : state.auth;
   $("#navigation").hidden = !logged;
-  $("#menu-toggle").hidden = !logged;
-  $("#account-name").textContent = state.user?.nombre || "";
-  $("#account-role").textContent =
-    state.user?.rol === "administrador" ? "Administrador" : state.user?.rol === "conductor" ? "Conductor" : "Pasajero";
-  $('#navigation button[data-view="history"]').hidden = state.user?.rol === "administrador";
-  document.querySelectorAll("[data-view]").forEach((b) => {
-    if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
+  $('#navigation [data-view="history"]').hidden = admin;
+  $('#navigation [data-view="account"]').hidden = false;
+  document.querySelectorAll("#navigation [data-view]").forEach((b) => {
+    const current = b.dataset.view === state.view || (b.dataset.view === "home" && admin && state.view === "home");
+    if (current) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
-  $('#navigation button[data-view="home"]').textContent =
-    state.user?.rol === "administrador" ? "Solicitudes" : state.user?.rol === "conductor" ? "Conducir" : "Viajar";
-  if (logged && state.user.practica === "1" && !$("#practice-link")) {
-    const b = document.createElement("button");
-    b.id = "practice-link";
-    b.type = "button";
-    b.dataset.view = "practice";
-    b.textContent = "Laboratorio Redis";
-    $("#account-menu").append(b);
-  } else if (!logged) $("#practice-link")?.remove();
+  $("#home-label").textContent = admin ? "Solicitudes" : state.user?.rol === "conductor" ? "Conducir" : "Viajar";
+  const showRoute = logged && !admin && state.view === "home" && !!state.trip;
+  $("#route-card").hidden = !showRoute;
+  document.body.dataset.route = showRoute ? "1" : "0";
+  if (showRoute) $("#route-card").innerHTML = routeCard(state.trip);
+  const picking = logged && state.user.rol === "pasajero" && state.view === "home" && !state.trip;
+  if (!showRoute && !picking) state.mapOpen = false;
+  // Mobile follows the design: the map stays out of sight until "Mapa" or a point button opens it.
+  document.body.dataset.map = state.mapOpen ? "open" : "hidden";
+  $("#show-map")?.setAttribute("aria-pressed", String(!!state.mapOpen));
+  $("#back").hidden = !state.mapOpen && (!logged || state.view === "home" || state.view === "chat");
+  $("#back").setAttribute("aria-label", state.mapOpen ? "Cerrar mapa" : "Volver");
   panel.innerHTML = !logged
     ? authView()
-    : state.user.rol === "administrador"
+    : admin && state.view === "account"
+      ? accountView()
+    : admin
       ? adminView()
     : state.view === "history"
       ? historyView()
       : state.view === "practice"
         ? practiceView()
-        : state.trip
-          ? tripView(state.trip)
-          : state.user.rol === "pasajero"
-            ? newTripView()
-            : driverHome();
-  const expanded = !logged || state.user.rol === "administrador" || state.view !== "home" || !!state.trip?.ofertas?.length;
+        : state.view === "account"
+          ? accountView()
+          : state.view === "chat"
+            ? chatView()
+            : state.trip
+              ? tripView(state.trip)
+              : state.user.rol === "pasajero"
+                ? newTripView()
+                : driverHome();
+  const expanded = !logged || admin || state.view !== "home" || !!state.trip;
   window.rideSheet?.sync(`${state.user?.id}:${mode}`, expanded ? "expanded" : "medium");
   if (mode !== renderedMode) {
     renderedMode = mode;
@@ -829,6 +1150,12 @@ function render(force = false) {
   tick();
   setOnline(state.online);
   if (draft) restorePanelState(draft);
+  if (state.view === "chat") {
+    const log = $(".chat-log");
+    if (log && (chatLogAtBottom || !draft)) log.scrollTop = log.scrollHeight;
+    markChatSeen();
+  }
+  maybePromptRating();
 }
 function tick() {
   const now = Date.now() / 1000 + state.offset;
@@ -845,9 +1172,16 @@ async function refreshData() {
   state.pending = result.pendientes;
   state.finished = result.finalizados;
   if (state.user.rol === "administrador") state.reviews = await api("/admin/solicitudes");
+  const previous = state.trip?.id;
   if (result.viaje) state.trip = result.viaje;
-  else if (state.trip && !terminal(state.trip))
+  // A finished trip keeps refreshing until the driver registers the payment.
+  else if (state.trip && (!terminal(state.trip) || (state.trip.estado === "finalizado" && state.trip.pago === "pendiente")))
     state.trip = await api("/viajes/" + state.trip.id);
+  if (state.trip?.id !== previous) {
+    state.selectedOffer = null;
+    state.counterOpen = false;
+  }
+  await loadChat().catch(() => {});
   render();
 }
 function refresh() {
@@ -930,6 +1264,88 @@ function forgetRetry() {
     /* Storage is optional. */
   }
 }
+async function loadChat() {
+  const j = state.trip;
+  if (!j || !state.user || state.user.rol === "administrador" || !["confirmado", "en_curso", "finalizado"].includes(j.estado)) return;
+  if (state.chat.tripId !== j.id) state.chat = { tripId: j.id, messages: [], open: false, outbox: [] };
+  // A finished trip only needs its history when the chat is on screen.
+  if (j.estado === "finalizado" && state.view !== "chat" && state.chat.messages.length) return;
+  if (chatLoad) return chatLoad;
+  const last = state.chat.messages[state.chat.messages.length - 1]?.id;
+  const promise = api(`/viajes/${j.id}/chat${last ? `?desde=${encodeURIComponent(last)}` : ""}`)
+    .then((result) => {
+      if (state.chat.tripId !== j.id) return;
+      const known = new Set(state.chat.messages.map((m) => m.id));
+      state.chat.messages.push(...result.mensajes.filter((m) => !known.has(m.id)));
+      state.chat.open = result.abierto;
+    })
+    .finally(() => {
+      if (chatLoad === promise) chatLoad = null;
+    });
+  chatLoad = promise;
+  return promise;
+}
+function markChatSeen() {
+  const last = state.chat.messages[state.chat.messages.length - 1];
+  if (last && state.chat.tripId) storageSet(seenKey(state.chat.tripId), last.id);
+}
+function scheduleChatPoll() {
+  clearTimeout(chatTimer);
+  if (state.view !== "chat" || document.hidden || !state.user) return;
+  chatTimer = setTimeout(async () => {
+    try {
+      await loadChat();
+      render();
+    } catch {
+      /* The regular poll reports connection problems. */
+    } finally {
+      scheduleChatPoll();
+    }
+  }, 3000);
+}
+async function sendChat(text, retry = null) {
+  const j = state.trip;
+  if (!j) return;
+  const item = retry || { local: crypto.randomUUID(), texto: text, estado: "enviando", nonce: crypto.randomUUID() };
+  item.estado = "enviando";
+  if (!retry) state.chat.outbox.push(item);
+  render(true);
+  try {
+    await api(`/viajes/${j.id}/chat`, { method: "POST", body: { texto: item.texto, peticion_id: item.nonce } });
+    if (chatLoad) await chatLoad.catch(() => {});
+    await loadChat();
+    state.chat.outbox = state.chat.outbox.filter((m) => m !== item);
+  } catch (e) {
+    item.estado = "error";
+    if (e.code === "CHAT_CERRADO") state.chat.open = false;
+    notice(e.message, true);
+  }
+  render(true);
+}
+const skipRatingKey = (tripId) => `sicuani:calificar-luego:${state.user?.id}:${tripId}`;
+function maybePromptRating() {
+  const j = state.trip;
+  if (!j || state.user?.rol !== "pasajero" || state.view !== "home" || j.estado !== "finalizado" || j.calificacion) return;
+  if (state.ratingPrompted.has(j.id) || storageGet(skipRatingKey(j.id))) return;
+  if ($("#action-dialog").open || $("#rating-dialog").open) return;
+  state.ratingPrompted.add(j.id);
+  openRating(j);
+  hydrateIcons();
+}
+function paintRating() {
+  const form = $("#rating-form");
+  const comment = $("#rating-comment", form);
+  if (comment) state.rating.comment = comment.value;
+  $("#rating-content").innerHTML = ratingContent();
+  hydrateIcons();
+}
+function closeMap() {
+  if (!state.mapOpen) return;
+  state.mapOpen = false;
+  if (!state.trip) state.selecting = null;
+  render(true);
+  updateSelection();
+}
 function closeDialog() {
   $("#action-dialog").close();
   dialogAction = null;
@@ -953,6 +1369,87 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b || b.disabled) return;
   try {
+    if (b.dataset.selectOffer) {
+      state.selectedOffer = b.dataset.selectOffer;
+      render(true);
+      $(`[data-select-offer="${CSS.escape(b.dataset.selectOffer)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (b.id === "toggle-counter") {
+      state.counterOpen = !state.counterOpen;
+      render(true);
+      if (state.counterOpen) $("#counter-panel input")?.focus();
+      return;
+    }
+    if (b.id === "back" && state.mapOpen && !state.trip) {
+      closeMap();
+      return;
+    }
+    if (b.id === "show-map" || (b.id === "back" && state.mapOpen)) {
+      state.mapOpen = b.id === "show-map" ? !state.mapOpen : false;
+      render(true);
+      requestAnimationFrame(() => {
+        map?.invalidateSize({ pan: false });
+        fitVisibleRoute();
+      });
+      return;
+    }
+    if (b.id === "back") {
+      state.view = "home";
+      clearTimeout(chatTimer);
+      render(true);
+      await refresh();
+      return;
+    }
+    if (b.hasAttribute("data-open-chat")) {
+      state.view = "chat";
+      render(true);
+      await loadChat();
+      render(true);
+      scheduleChatPoll();
+      $("#chat-input")?.focus({ preventScroll: true });
+      return;
+    }
+    if (b.dataset.quickReply) {
+      await sendChat(b.dataset.quickReply);
+      return;
+    }
+    if (b.dataset.chatRetry) {
+      const item = state.chat.outbox.find((m) => m.local === b.dataset.chatRetry);
+      if (item) await sendChat(item.texto, item);
+      return;
+    }
+    if (b.dataset.rate) {
+      openRating(state.trip);
+      hydrateIcons();
+      return;
+    }
+    if (b.id === "rating-skip") {
+      storageSet(skipRatingKey(state.rating.tripId), "1");
+      $("#rating-dialog").close();
+      return;
+    }
+    if (b.dataset.role) {
+      state.authRole = b.dataset.role;
+      state.authStep = 1;
+      render(true);
+      $(`[data-role="${b.dataset.role}"]`)?.focus();
+      return;
+    }
+    if (b.id === "auth-step-back") {
+      state.authStep = 1;
+      render(true);
+      $("#nombre")?.focus();
+      return;
+    }
+    if (b.id === "use-other-account" || b.id === "switch-auth-foot") {
+      state.auth = "login";
+      state.pendingAccount = null;
+      state.suggestedUsername = "";
+      state.registrationMessage = "";
+      render(true);
+      return;
+    }
     if (b.dataset.quickDelta) {
       const targetId = b.dataset.targetInput;
       const input = targetId ? document.getElementById(targetId) : null;
@@ -985,6 +1482,8 @@ document.addEventListener("click", async (e) => {
     }
     if (b.id === "switch-auth") {
       state.auth = state.auth === "login" ? "register" : "login";
+      state.authStep = 1;
+      state.pendingAccount = null;
       state.registrationMessage = "";
       state.suggestedUsername = "";
       render();
@@ -999,18 +1498,12 @@ document.addEventListener("click", async (e) => {
     }
     if (b.dataset.view) {
       state.view = b.dataset.view;
-      $("#account-menu").hidden = true;
-      $("#menu-toggle").setAttribute("aria-expanded", "false");
+      if (state.view !== "chat") clearTimeout(chatTimer);
       if (state.view === "history")
         state.history = await api("/viajes/historial");
       if (state.view === "home") await refresh();
       if (state.view === "practice") state.practice = await api("/practica");
       render(true);
-    }
-    if (b.id === "menu-toggle") {
-      const open = $("#account-menu").hidden;
-      $("#account-menu").hidden = !open;
-      b.setAttribute("aria-expanded", String(open));
     }
     if (b.id === "logout") {
       await api("/logout", { method: "POST", body: {} });
@@ -1019,7 +1512,15 @@ document.addEventListener("click", async (e) => {
     if (b.dataset.point) {
       state.selecting = b.dataset.point;
       updateSelection();
-      if (innerWidth <= 800) window.rideSheet?.set("compact");
+      if (innerWidth <= 800) {
+        state.mapOpen = true;
+        render(true);
+        requestAnimationFrame(() => {
+          map?.invalidateSize({ pan: false });
+          const point = state.points[state.selecting];
+          if (point) map?.setView([point.lat, point.lng], 16, { animate: false });
+        });
+      }
       $("#map").focus({ preventScroll: true });
     }
     if (b.id === "gps") {
@@ -1056,6 +1557,11 @@ document.addEventListener("click", async (e) => {
         ? { oferta_id: b.dataset.offerId || state.trip.oferta.id }
         : {};
       await mutate(`/viajes/${b.dataset.id}/${b.dataset.action}`, body);
+      if (b.dataset.action.includes("oferta")) {
+        state.counterOpen = false;
+        state.selectedOffer = null;
+        render(true);
+      }
     }
     if (b.dataset.dialog) openReason(b.dataset.dialog, b.dataset.id);
     if (b.dataset.pay) {
@@ -1152,11 +1658,22 @@ document.addEventListener("keydown", (e) => {
   }
 });
 document.addEventListener("change", async (e) => {
-  if (e.target.id === "registration-role") {
-    const vehicle = $("#vehicle-fields");
-    const driver = e.target.value === "conductor";
-    vehicle.hidden = !driver;
-    vehicle.disabled = !driver;
+  if (e.target.name === "metodo" && e.target.closest("#pay-form")) {
+    state.payMethod = e.target.value;
+    $("#pay-method-name").textContent = methodName(e.target.value);
+  }
+  if (e.target.closest("#rating-form")) {
+    const form = $("#rating-form");
+    if (e.target.name === "estrellas") {
+      const stars = Number(e.target.value);
+      const group = stars >= 4 ? goodTags : badTags;
+      state.rating.stars = stars;
+      state.rating.tags = state.rating.tags.filter((t) => group.includes(t));
+      paintRating();
+      $(`#rating-form input[name="estrellas"][value="${stars}"]`)?.focus();
+    }
+    if (e.target.name === "etiquetas")
+      state.rating.tags = new FormData(form).getAll("etiquetas");
   }
   if (e.target.id === "available") {
     try {
@@ -1185,22 +1702,46 @@ document.addEventListener("submit", async (e) => {
       notice(decision === "aprobar" ? "Chofer aprobado." : "Solicitud rechazada.");
       return;
     }
-    if (form.id === "auth-form") {
+    if (form.id === "auth-form" || form.id === "status-form") {
+      const login = state.auth !== "register";
+      if (login && (!String(data.usuario || "").trim() || !data.password))
+        throw new Error("Escribe tu usuario y tu contraseña.");
+      if (!login && state.authRole === "conductor" && state.authStep === 1) {
+        state.authStep = 2;
+        render(true);
+        $("#placa")?.focus();
+        return;
+      }
       submit.disabled = true;
-      const result = await api(
-        state.auth === "login" ? "/login" : "/registro",
-        { method: "POST", body: data },
-      );
+      let result;
+      try {
+        result = await api(login ? "/login" : "/registro", { method: "POST", body: data });
+      } catch (err) {
+        if (login && ["PENDIENTE_APROBACION", "RECHAZADO"].includes(err.code)) {
+          const rejected = err.code === "RECHAZADO";
+          state.pendingAccount = { ...(state.pendingAccount || {}), estado: rejected ? "rechazado" : "pendiente", motivo: rejected ? err.message.split("Motivo:").slice(1).join("Motivo:").trim() : "", usuario: data.usuario };
+          const again = state.auth === "pending";
+          state.auth = "pending";
+          render(true);
+          if (again) notice(rejected ? "Tu solicitud sigue rechazada." : "Tu cuenta sigue en revisión.");
+          return;
+        }
+        throw err;
+      }
       if (result.pendiente_aprobacion) {
         state.csrf = result.csrf;
         state.user = null;
-        state.auth = "login";
+        state.auth = "pending";
+        state.authStep = 1;
+        state.pendingAccount = { estado: "pendiente", nombre: result.cuenta.nombre, usuario: result.cuenta.usuario };
         state.suggestedUsername = result.cuenta.usuario;
-        state.registrationMessage =
-          "Tu cuenta de chofer fue registrada. El responsable del proyecto debe aprobarla antes de que puedas conducir.";
         render(true);
         return;
       }
+      state.auth = "login";
+      state.authRole = "pasajero";
+      state.authStep = 1;
+      state.pendingAccount = null;
       state.user = result.usuario;
       state.csrf = result.csrf;
       state.registrationMessage = "";
@@ -1236,6 +1777,28 @@ document.addEventListener("submit", async (e) => {
         importe: Math.round(Number(data.importe) * 100),
         oferta_id: form.dataset.offerId || state.trip.oferta.id,
       });
+    if (form.id === "pay-form") {
+      await mutate(`/viajes/${state.trip.id}/registrar-pago`, { metodo: data.metodo });
+      notice("Pago simulado registrado");
+    }
+    if (form.id === "chat-form") {
+      const text = String(data.texto || "").trim();
+      if (!text) return;
+      $("#chat-input").value = "";
+      await sendChat(text);
+      $("#chat-input")?.focus({ preventScroll: true });
+    }
+    if (form.id === "rating-form") {
+      const values = new FormData(form);
+      submit.disabled = true;
+      await mutate(`/viajes/${state.rating.tripId}/calificar`, {
+        estrellas: Number(values.get("estrellas")),
+        etiquetas: values.getAll("etiquetas"),
+        comentario: String(values.get("comentario") || "").trim(),
+      });
+      $("#rating-dialog").close();
+      notice("¡Gracias por tu calificación!");
+    }
     if (form.id === "dialog-form") {
       submit.disabled = true;
       await mutate(
@@ -1259,7 +1822,7 @@ document.addEventListener("submit", async (e) => {
       render(true);
     }
   } catch (err) {
-    const error = $("#form-error", form) || $("#dialog-error", form) || $(".error-text", form);
+    const error = $("#form-error", form) || $("#dialog-error", form) || $("#rating-error", form) || $(".error-text", form);
     if (error) {
       error.textContent = err.message;
       error.hidden = false;
@@ -1276,6 +1839,7 @@ document.addEventListener("visibilitychange", () => {
     refresh()
       .catch(() => {})
       .finally(schedulePoll);
+    scheduleChatPoll();
   }
 });
 window.addEventListener("online", () => {
@@ -1292,8 +1856,6 @@ window.addEventListener("focus", () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    $("#account-menu").hidden = true;
-    $("#menu-toggle").setAttribute("aria-expanded", "false");
     state.selecting = null;
     updateSelection();
   }

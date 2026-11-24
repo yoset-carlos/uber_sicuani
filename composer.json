@@ -13,7 +13,7 @@
   },
   "scripts": {
     "conductor": "Uber\\Console\\CreateDriver::run",
-    "test": ["php tests/run.php", "php tests/multi-offers.php"],
+    "test": ["php tests/run.php", "php tests/multi-offers.php", "php tests/chat-rating.php"],
     "serve": "php -S 127.0.0.1:8081 -t public public/router.php"
   }
 }
