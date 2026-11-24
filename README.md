@@ -46,6 +46,8 @@ Las dependencias de Node se usan únicamente para preparar recursos y ejecutar v
 - Exclusión del conductor tras rechazo o vencimiento. Reapertura solamente mientras quede tiempo de búsqueda.
 - Cancelación con motivo antes del inicio; incidencias con motivo/comentario durante el viaje.
 - Finalización con pago pendiente; registro posterior de Efectivo/Yape simulado; historial persistente y ranking de conductores por viajes finalizados.
+- Chat entre el pasajero y el chofer confirmado mientras el viaje está confirmado o en curso; se cierra al finalizar y el historial sigue disponible. Respuestas rápidas, reintento sin duplicar mensajes y contador de no leídos.
+- Calificación del chofer (1 a 5 estrellas, etiquetas y comentario opcional) al finalizar, una sola vez por viaje. El promedio y los viajes finalizados del chofer aparecen en sus propuestas.
 - Laboratorio privado: XGROUP, XREADGROUP, XPENDING, XACK sobre un Stream de práctica separado.
 
 La línea discontinua une los dos puntos como referencia: **no representa una ruta calculada por calles**. No hay seguimiento GPS continuo, estimaciones de llegada, categorías comerciales ni pagos con tarjeta.
@@ -116,6 +118,9 @@ Todas las rutas usan `/api`. Las consultas son GET y las acciones POST. Primero 
 | GET `/viajes/{id}` | Estado de un viaje propio |
 | POST `/viajes` | Crear con `origen`, `destino` y `peticion_id` |
 | POST `/viajes/{id}/{accion}` | `reservar`, `ofertar`, `aceptar-oferta`, `rechazar-oferta`, `cancelar`, `iniciar`, `finalizar`, `registrar-pago`, `registrar-incidencia` |
+| GET `/viajes/{id}/chat?desde=ID` | Mensajes del viaje (todos, o los posteriores a `desde`) y si el chat sigue abierto |
+| POST `/viajes/{id}/chat` | `{texto, peticion_id}`: mensaje entre el pasajero y el chofer confirmado |
+| POST `/viajes/{id}/calificar` | `{estrellas, etiquetas, comentario, peticion_id}`: el pasajero califica una vez el viaje finalizado |
 | GET/POST `/practica` | Laboratorio privado autorizado |
 
 Los puntos llevan `nombre`, `lat`, `lng`. `ofertar` recibe `importe` entero en céntimos, entre 100 y 100000; aceptar/rechazar recibe `oferta_id`; pago recibe `metodo: "efectivo"/"yape"`; cancelación/incidencia recibe `motivo` y `comentario`. Todas las acciones sobre viajes requieren `peticion_id` único (16–80 caracteres alfanuméricos, guion o guion bajo).
@@ -123,6 +128,8 @@ Los puntos llevan `nombre`, `lat`, `lng`. `ofertar` recibe `importe` entero en c
 Las nuevas solicitudes usan `version: 2`. `reservar` inicia una preparación individual sin retirar la solicitud para otros choferes. El pasajero recibe `ofertas` (lista con ID, autor, chofer, importe, vencimiento y `conductor_info`) mientras el viaje permanece `pendiente`. `contraofertar`, `aceptar-oferta` y `rechazar-oferta` operan únicamente sobre el `oferta_id` indicado. La aceptación confirma un solo chofer en una operación atómica y libera a los demás. Rechazar o vencer una propuesta no afecta a las otras; cancelar como chofer antes de la confirmación retira solo su participación. El chofer recibe una vista personal `reservado`/`ofertado` y únicamente su oferta, o `no_elegido` cuando termina su participación. Los viajes anteriores sin versión conservan el flujo original para no interrumpirlos.
 
 Registro recibe `rol: "pasajero"/"conductor"` (valor por defecto pasajero para compatibilidad) y, en conductor, `placa`, `color`, `marca`, `modelo`. El registro de chofer devuelve `usuario: null`, `cuenta` sin secretos y `pendiente_aprobacion: true`; no inicia sesión. El servidor decide la aprobación y los permisos de laboratorio, sin aceptar privilegios enviados por el cliente. Un inicio de sesión con credenciales válidas pero sin aprobación responde403 con `PENDIENTE_APROBACION`.
+
+El chat usa un Stream por viaje (`chat:{id}`, hasta unos 200 mensajes); el texto tiene de 1 a 500 caracteres. La calificación queda en el viaje (`calificacion`) y suma en el Hash `calificaciones:{chofer}`; las etiquetas válidas son Puntual, Amable, Auto limpio, Buena conducción, Llegó tarde, Manejo brusco, Auto sucio y Otro.
 
 Respuestas: `{ "ok": true, "datos": ... }` o `{ "ok": false, "error": { "codigo": "...", "mensaje": "...", "peticion": "..." } }`. Errores: 401 sesión, 403 permisos/CSRF, 404 recurso/acción, 409 conflicto, 422 validación, 429 límite y 503 indisponibilidad. Ante 409 o reconexión consultar nuevamente el estado.
 

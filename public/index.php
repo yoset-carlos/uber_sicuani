@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/src/bootstrap.php';
-use Uber\{Store,Accounts,Journeys,Practice,Geocoder,ApiError};
+use Uber\{Store,Accounts,Journeys,Practice,Geocoder,ApiError,Chat,Ratings};
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header('X-Frame-Options: DENY');
@@ -29,7 +29,7 @@ try {
         if ((int)($_SERVER['CONTENT_LENGTH']??0)>16384) throw new ApiError('CUERPO_GRANDE','La solicitud es demasiado grande.',413);
         $body=json_decode(file_get_contents('php://input'),true,32,JSON_THROW_ON_ERROR);
         if (!is_array($body)) throw new ApiError('JSON_INVALIDO','Envía un objeto JSON válido.',422);
-        foreach (['usuario','password','nombre','telefono','rol','placa','color','marca','modelo','peticion_id','motivo','comentario','accion'] as $field) {
+        foreach (['usuario','password','nombre','telefono','rol','placa','color','marca','modelo','peticion_id','motivo','comentario','accion','texto'] as $field) {
             if (array_key_exists($field,$body) && !is_string($body[$field])) throw new ApiError('DATOS_INVALIDOS','El campo '.$field.' debe ser texto.',422);
         }
         if (array_key_exists('oferta_id',$body) && !is_string($body['oferta_id']) && !is_int($body['oferta_id'])) throw new ApiError('DATOS_INVALIDOS','El identificador de oferta no es válido.',422);
@@ -94,6 +94,9 @@ try {
         $method==='POST' && $path==='/api/mapa/buscar'=>$u['rol']==='pasajero'?(new Geocoder($store))->search($body):throw new ApiError('PERMISO','Solo pasajeros pueden buscar direcciones.',403),
         $method==='POST' && $path==='/api/viajes'=>$journeys->action($uid,'crear','',$body,(string)($body['peticion_id']??'')),
         $method==='GET' && preg_match('#^/api/viajes/([1-9]\d*)$#D',$path,$m)===1=>$journeys->get($uid,$m[1]),
+        $method==='GET' && preg_match('#^/api/viajes/([1-9]\d*)/chat$#D',$path,$m)===1=>(new Chat($store))->read($uid,$m[1],is_string($_GET['desde']??null)?$_GET['desde']:''),
+        $method==='POST' && preg_match('#^/api/viajes/([1-9]\d*)/chat$#D',$path,$m)===1=>(new Chat($store))->send($uid,$m[1],$body,(string)($body['peticion_id']??'')),
+        $method==='POST' && preg_match('#^/api/viajes/([1-9]\d*)/calificar$#D',$path,$m)===1=>calificar($store,$journeys,$uid,$m[1],$body),
         $method==='POST' && preg_match('#^/api/viajes/([1-9]\d*)/([a-z-]+)$#D',$path,$m)===1=>$journeys->action($uid,$m[2],$m[1],$body,(string)($body['peticion_id']??'')),
         $method==='GET' && $path==='/api/practica'=>(new Practice($store))->execute($u,'consultar'),
         $method==='POST' && $path==='/api/practica'=>(new Practice($store))->execute($u,(string)($body['accion']??''),$body),
@@ -117,4 +120,8 @@ function availability(Store $store,array $u,array $body): array {
     if (!is_bool($body['disponible']??null)) throw new ApiError('DISPONIBILIDAD_INVALIDA','Selecciona Disponible o No disponible.',422);
     if ($store->run('availability',[$u['id'],$body['disponible']?'1':'0'])!==1) throw new ApiError('PERMISO','La cuenta no está autorizada para conducir.',403);
     return Store::safeUser($store->user($u['id']));
+}
+function calificar(Store $store,Journeys $journeys,string $uid,string $id,array $body): array {
+    (new Ratings($store))->rate($uid,$id,$body,(string)($body['peticion_id']??''));
+    return $journeys->get($uid,$id);
 }

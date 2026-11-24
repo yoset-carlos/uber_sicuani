@@ -53,7 +53,7 @@ final class Journeys
                 foreach ($entries as $driver=>$entry) {
                     if ($entry['estado']!=='ofertado') continue;
                     $offer=$entry['oferta'];
-                    $offer['conductor_info']=array_intersect_key($this->store->user((string)$driver),array_flip(['id','nombre','marca','modelo','color','placa']));
+                    $offer['conductor_info']=array_intersect_key($this->store->user((string)$driver),array_flip(['id','nombre','marca','modelo','color','placa']))+Ratings::stats($this->store,(string)$driver);
                     $j['ofertas'][]=$offer;
                 }
                 usort($j['ofertas'],static fn($a,$b)=>(int)$a['conductor']<=>(int)$b['conductor']);
@@ -73,7 +73,8 @@ final class Journeys
         $j['incidencias']=array_values($j['incidencias']??[]);
         $j['pasajero_info']=array_intersect_key($this->store->user($j['pasajero']),array_flip(['id','nombre']));
         // Before a price is proposed, vehicle identity remains private to the driver.
-        if (isset($j['conductor'], $j['oferta']) && $j['estado']!=='reservado' && $j['estado']!=='no_elegido') $j['conductor_info']=Store::safeUser($this->store->user($j['conductor']));
+        if (isset($j['conductor'], $j['oferta']) && $j['estado']!=='reservado' && $j['estado']!=='no_elegido') $j['conductor_info']=Store::safeUser($this->store->user($j['conductor']))+Ratings::stats($this->store,$j['conductor']);
+        if (isset($j['calificacion'])) $j['calificacion']['etiquetas']=array_values((array)($j['calificacion']['etiquetas']??[]));
         return $j;
     }
     public function pending(string $uid): array
