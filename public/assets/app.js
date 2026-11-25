@@ -1105,7 +1105,7 @@ function render(force = false) {
   const picking = logged && state.user.rol === "pasajero" && state.view === "home" && !state.trip;
   if (!showRoute && !picking) state.mapOpen = false;
   // Mobile follows the design: the map stays out of sight until "Mapa" or a point button opens it.
-  document.body.dataset.map = state.mapOpen ? "open" : "hidden";
+  document.body.dataset.map = !logged ? "none" : state.mapOpen ? "open" : "hidden";
   $("#show-map")?.setAttribute("aria-pressed", String(!!state.mapOpen));
   $("#back").hidden = !state.mapOpen && (!logged || state.view === "home" || state.view === "chat");
   $("#back").setAttribute("aria-label", state.mapOpen ? "Cerrar mapa" : "Volver");
